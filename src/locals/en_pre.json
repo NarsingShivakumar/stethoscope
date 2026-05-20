@@ -1,0 +1,33 @@
+{
+  "random_blood_sugar" : "Random Blood Sugar",
+  "prescription_details" : "Prescription Details",
+  "medication": "Medication",
+  "preferred_advice" : "Preferred Advice",
+  "diagnosis" : "Diagnosis",
+  "symptoms": "Symptoms",
+  "tests": "Tests",
+  "heartRate": "Heart Rate",
+  "dosage" : "Dosage",
+  "duration": "Duration",
+  "timing": "Timing",
+  "medicalNotes" : "Medical Notes",
+  "medicineFrequency": "Medicine Frequency",
+  "medicineWhen": "Medicine When",
+  "patientName": "Patient Name",
+  "note" : "Note: Follow the prescription for the specified duration. Contact the doctor if you experience any side effects.",
+  "date" : "Date",
+  "age": "Age :",
+  "height_title":"Height",
+  "temperature_title": "Temperature",
+  "weight_title": "Weight",
+  "vitals": "Vitals",
+  "spo2_title":"SpO2",
+  "blood_pressure": "Blood Pressure",
+  "suggested_doctor":"Suggested Doctor",
+  "MedicalHistory": "Medical History",
+  "bmi_title": "BMI",
+  "hemoglobin_title": "hemoglobin"
+
+
+}
+

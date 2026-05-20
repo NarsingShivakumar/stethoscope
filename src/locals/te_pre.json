@@ -1,0 +1,26 @@
+{
+  "random_blood_sugar": "యాదృచ్ఛిక రక్త చక్కెర",
+  "prescription_details": "ప్రిస్క్రిప్షన్ వివరాలు",
+  "medication": "మొద్దు",
+  "preferred_advice": "పసందైన సలహా",
+  "diagnosis": "నిర్ణయము",
+  "symptoms": "లక్షణాలు",
+  "tests": "పరీక్షలు",
+  "heartRate": "హృదయ రేటు",
+  "dosage": "మోతాదు",
+  "duration": "కాలవ్యవధి",
+  "medicalNotes": "చికిత్సా గమనికలు",
+  "medicineFrequency": "ఔషధం వేళలు",
+  "medicineWhen": "ఔషధం ఎప్పుడు",
+  "patientName": "రోగి పేరు",
+  "note": "గమనిక: సూచించిన కాలానికి మందు తీసుకోండి. మీరు ఏదైనా సైడ్ ఎఫెక్ట్స్ అనుభవిస్తే, డాక్టర్‌ను సంప్రదించండి.",
+  "Blood_pressure": "రక్తపోటు ",
+  "date" : "తేదీ ",
+  "height_title": "ఎత్తు",
+  "temperature_title": "ఉష్ణోగ్రత",
+  "weight_title": "బరువు",
+  "age": "వయస్సు :",
+  "bmi_title": "BMI",
+  "hemoglobin_title": "హీమోగ్లోబిన్"
+
+}

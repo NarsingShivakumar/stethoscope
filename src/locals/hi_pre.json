@@ -1,0 +1,28 @@
+{
+
+  "random_blood_sugar": "रैंडम ब्लड शुगर",
+  "prescription_details": "प्रिस्क्रिप्शन विवरण",
+  "medication": "मेडिकेशन",
+  "preferred_advice": "पसंदीदा सलाह",
+  "diagnosis": "निदान",
+  "symptoms": "लक्षण",
+  "tests": "परीक्षण",
+  "heartRate": "हृदय दर",
+  "dosage": "खुराक",
+  "duration": "अवधि",
+  "medicalNotes": "चिकित्सा नोट्स",
+  "medicineFrequency": "दवा की आवृत्ति",
+  "medicineWhen": "दवा कब",
+  "patientName": "रोगी का नाम",
+  "note": "नोट: निर्दिष्ट अवधि के लिए प्रिस्क्रिप्शन का पालन करें। यदि आपको कोई साइड इफेक्ट्स महसूस हों, तो डॉक्टर से संपर्क करें।",
+  "Blood_pressure": "रक्तचाप ",
+  "date" : "तारीख़ ",
+  "height_title": "ऊंचाई",
+  "temperature_title": "तापमान",
+  "weight_title": "वजन",
+  "age": "आयु :",
+  "vitals": "जीवनी शक्ति",
+  "bmi_title": "BMI",
+  "hemoglobin_title": "हीमोग्लोबिन"
+
+}
