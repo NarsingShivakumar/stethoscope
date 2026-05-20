@@ -6,6 +6,8 @@ import Splash from './src/Splash';
 import AiStethHomeScreen from './src/aiStethApp/screens/AiStethHomeScreen';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import { RecordingsListSection } from './src/aiStethApp/components/sections/RecordingsListSection';
+import { PreviousRecordingsScreen } from './src/aiStethApp/screens/PreviousRecordingsScreen';
+import { LandingScreen } from './src/aiStethApp/screens/LandingScreen';
 
 // Ignore all log notifications
 LogBox.ignoreAllLogs(true);
@@ -23,7 +25,9 @@ function App() {
         >
           <Stack.Screen name="Splash" component={Splash} />
           <Stack.Screen name="AiStethHomeScreen" component={AiStethHomeScreen} />
-          <Stack.Screen name="RecordingsListSection" component={RecordingsListSection} /> 
+          <Stack.Screen name="RecordingsListSection" component={RecordingsListSection} />
+          <Stack.Screen name="LandingScreen" component={LandingScreen} options={{ headerShown: false }} />
+          <Stack.Screen name="PreviousRecordingsScreen" component={PreviousRecordingsScreen} options={{ headerShown: false }} />
 
         </Stack.Navigator>
       </NavigationContainer>

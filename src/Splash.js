@@ -88,7 +88,7 @@ const Splash = ({ navigation }) => {
       }
 
       // Directly transition routing context into your target landing home screen sequence
-      navigation.replace('AiStethHomeScreen');
+      navigation.replace('LandingScreen');
     };
 
     initializeApp();
