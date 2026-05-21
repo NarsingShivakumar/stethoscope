@@ -7,21 +7,22 @@ import { stethoscopeReducer } from './slices/StethoscopeSlice';
 import { aiStethPatientReducer } from './slices/aiStethSlices/AiStethPatientSlice';
 import { aiStethRecordingReducer } from './slices/aiStethSlices/AiStethRecordingSlice';
 import { aiStethAnalysisReducer } from './slices/aiStethSlices/AiStethAnalysisSlice';
-
+import { separationReducer }  from './slices/SeparationSlice';
 
 
 
 
 // Combine reducers
 const rootReducer = combineReducers({
- 
+
   // fireBase: fireBaseReducer,
- 
+
   // ai steth
   stethoscope: stethoscopeReducer,
   aiStethPatient: aiStethPatientReducer,
   aiStethRecording: aiStethRecordingReducer,
   aiStethAnalysis: aiStethAnalysisReducer,
+  separation:  separationReducer,   // replaces aiStethPatient + aiStethRecording + aiStethAnalysis
 
   // Add other modules if needed
 });

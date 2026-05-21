@@ -5,6 +5,7 @@ import com.facebook.react.ReactPackage;
 import com.facebook.react.bridge.NativeModule;
 import com.facebook.react.bridge.ReactApplicationContext;
 import com.facebook.react.uimanager.ViewManager;
+import com.stethoscope.aistethapp.SeparationAudioPlayer;
 import com.stethoscope.aistethapp.StethoscopeRecorderModule;
 import com.stethoscope.aistethapp.AudioRoutingManager;
 
@@ -27,6 +28,7 @@ public class MyAppPackage implements ReactPackage {
         //  AiSteth bridge
         modules.add(new StethoscopeRecorderModule(reactContext));
         modules.add(new AudioRoutingManager(reactContext));
+        modules.add(new SeparationAudioPlayer(reactContext));
 
 
         return modules;
