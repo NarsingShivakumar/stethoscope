@@ -19,8 +19,8 @@ export const APP_CONFIG = {
   // Set to your server's LAN IP when running on a physical device.
   // Android emulator → 10.0.2.2 reaches the host machine's localhost.
   STETH_SERVER_URL: true
-    ? 'http://192.168.0.116:8000'   // emulator
-    : 'http://192.168.0.116:8000', // physical device — update this IP
+    ? 'http://192.168.0.116:5000'   // emulator
+    : 'http://192.168.0.116:5000', // physical device — update this IP
 };
 
 // Debug logger utility
