@@ -59,7 +59,7 @@ import Svg, {
 import { useDispatch, useSelector } from 'react-redux';
 
 import { APPCOLORS } from '../../../assets/colors';
-import { BORDERRADIUS, FONTS, SHADOWS, SPACING } from '../../../constants/theme';
+import { BORDERRADIUS, FONTS, SHADOWS, SPACING } from '../../constants/theme';
 import {
   detectHeartThunk,
   selectHeartActiveFraction,
@@ -80,6 +80,7 @@ import {
   selectMurmurType,
   selectHeartDetected,
 } from '../../../store/slices/SeparationSlice';
+// import { BORDER_RADIUS, SPACING } from '../../constants/theme';
 
 // ─────────────────────────────────────────────────────────────────────────────
 //  Constants
@@ -819,7 +820,7 @@ const HeartVisualization = memo(({ heartBase64, sampleRate = 44100 }) => {
 // ─────────────────────────────────────────────────────────────────────────────
 const s = StyleSheet.create({
   card: {
-    borderRadius: BORDERRADIUS?.xl ?? 16,
+    borderRadius: BORDER_RADIUS?.xl ?? 16,
     overflow: 'hidden',
     marginVertical: SPACING?.md ?? 8,
     ...SHADOWS?.large,

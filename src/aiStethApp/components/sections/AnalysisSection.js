@@ -36,7 +36,7 @@ import SepPlayer from '../../services/SeparationAudioPlayer';
 import { debugLog, debugError } from '../../../config/AppConfig';
 import { COLORS, SPACING, FONTS, BORDER_RADIUS, SHADOWS } from '../../constants/theme';
 import { APP_COLORS } from '../../../assets/colors';
-import HeartVisualization from '../HeartVisualization';
+import HeartVisualization from './HeartVisualization';
 
 
 // ─────────────────────────────────────────────────────────────────────────────
