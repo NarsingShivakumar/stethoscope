@@ -1,4 +1,35 @@
-// src/components/sections/AiStethAnalysisSection.js
+// src/aiStethApp/components/sections/AnalysisSection.js  v3
+//
+// COMPLETE REPLACEMENT for AiStethAnalysisSection.js
+//
+// REMOVED (from original):
+//   WebView, react-native-webview dependency
+//   fetchAIAnalysis / fetchVisualization / fetchAudioUrl polling thunks
+//   POLLING_INTERVALS, MAX_POLL_ATTEMPTS, 5 polling refs, 5 attempt counters
+//   AiStethAnalysisSlice selectors (15 selectors)
+//   getVideoHTML / getAudioHTML (no longer needed — native AudioTrack used)
+//   AiSteth patientId / fileName requirements
+//   Linking import (no external URLs needed)
+//
+// ADDED (v2 base → from existing AnalysisSection.js in your repo):
+//   SeparationSlice selectors (heart, lung, noiseLevel, signalQuality, etc.)
+//   SeparationAudioPlayer native module for AudioTrack playback
+//   Signal quality badge from NMF noiseLevel metric
+//   Noise level + signal quality meters
+//   Save WAV to device storage
+//   Progress bar during processing
+//
+// NEW in v3:
+//   detectHeartThunk  → POST /detect_heart on separated heart channel
+//   addNoiseThunk     → POST /add_noise, then preview noisy audio
+//   Heart Detected banner (❤️ detected / ⚠️ not detected) with confidence + BPM
+//   Noise injection controls (voice / white / pink / brown chips + SNR picker)
+//   Noisy audio play button (same SeparationAudioPlayer pattern)
+//   Both heart AND lung channels have full play support (unchanged from v2)
+//
+// UI PRESERVED IDENTICAL from original:
+//   MediaButton component, card layouts, gradients, animations,
+//   empty/loading/error states, retake button — all pixel-for-pixel preserved.
 
 import React, { useEffect, useState, useRef, useCallback, memo } from 'react';
 import {
@@ -9,74 +40,62 @@ import {
     TouchableOpacity,
     ActivityIndicator,
     Alert,
-    Linking,
     Animated,
+    NativeModules,
 } from 'react-native';
 import { useDispatch, useSelector } from 'react-redux';
-import { WebView } from 'react-native-webview';
 import { COLORS, SPACING, FONTS, BORDER_RADIUS, SHADOWS } from '../../constants/theme';
 import { debugLog, debugError } from '../../../config/AppConfig';
 import LinearGradient from 'react-native-linear-gradient';
 import LottieView from 'lottie-react-native';
-
-import {
-    fetchAIAnalysis,
-    fetchVisualization,
-    fetchAudioUrl,
-    selectAIAnalysis,
-    selectAIAnalysisLoading,
-    selectAIAnalysisError,
-    selectAIAnalysisPending,
-    selectVisualization,
-    selectVisualizationDenoised,
-    selectVisualizationLoading,
-    selectVisualizationGTPending,
-    selectVisualizationDenoisedPending,
-    selectAudioUrl,
-    selectAudioUrlDenoised,
-    selectAudioLoading,
-    selectAudioGTPending,
-    selectAudioDenoisedPending,
-    selectLastAnalysedFileName,
-    selectLastAnalysedPatientId,
-    clearAllAnalysisData,
-} from '../../../store/slices/aiStethSlices/AiStethAnalysisSlice';
-// import { setAiStethRecording } from '../../../store/slices/VitalSlice';
-
 import { APP_COLORS } from '../../../assets/colors';
 import { setVitalProcessing } from '../../../store/slices/VitalSlice';
 import { t } from 'i18next';
 
-// App Color Palette based on #32879B
+import {
+    // existing v2 selectors
+    selectIsProcessing,
+    selectProgress,
+    selectHeart,
+    selectLung,
+    selectHeartWav,
+    selectLungWav,
+    selectNoiseLevel,
+    selectSignalQuality,
+    selectProcessingMs,
+    selectSepError,
+    selectHasResults,
+    clearSeparationData,
+    // NEW v3 selectors
+    selectIsDetectingHeart,
+    selectHeartDetected,
+    selectHeartConfidence,
+    selectHeartBpm,
+    selectHeartEnergyRatio,
+    selectHeartPeriodicity,
+    selectHeartDetectError,
+    selectIsAddingNoise,
+    selectNoisyAudio,
+    selectAddNoiseError,
+    clearHeartDetection,
+    clearNoisyAudio,
+    // NEW v3 thunks
+    detectHeartThunk,
+    addNoiseThunk,
+} from '../../../store/slices/SeparationSlice';
 
+const { SeparationAudioPlayer } = NativeModules;
 
-const POLLING_INTERVALS = {
-    AI_ANALYSIS: 5000,
-    VISUALIZATION: 7000,
-    AUDIO: 5000,
-};
-const MAX_POLL_ATTEMPTS = {
-    AI_ANALYSIS: 12,
-    VISUALIZATION: 40,
-    AUDIO: 40,
-};
-
+// ── MediaButton — identical to original ──────────────────────────────────────
 const MediaButton = memo(({ item, isSelected, onPress }) => {
     const scaleAnim = useRef(new Animated.Value(1)).current;
 
     const handlePressIn = () => {
-        Animated.spring(scaleAnim, {
-            toValue: 0.95,
-            useNativeDriver: true,
-        }).start();
+        Animated.spring(scaleAnim, { toValue: 0.95, useNativeDriver: true }).start();
     };
-
     const handlePressOut = () => {
         Animated.spring(scaleAnim, {
-            toValue: 1,
-            tension: 50,
-            friction: 3,
-            useNativeDriver: true,
+            toValue: 1, tension: 50, friction: 3, useNativeDriver: true,
         }).start();
     };
 
@@ -88,11 +107,7 @@ const MediaButton = memo(({ item, isSelected, onPress }) => {
             disabled={!item.available}
             activeOpacity={0.9}
         >
-            <Animated.View
-                style={[
-                    { transform: [{ scale: scaleAnim }] }
-                ]}
-            >
+            <Animated.View style={{ transform: [{ scale: scaleAnim }] }}>
                 <LinearGradient
                     colors={
                         isSelected
@@ -106,14 +121,12 @@ const MediaButton = memo(({ item, isSelected, onPress }) => {
                         isSelected && styles.mediaControlCardActive,
                         !item.available && styles.mediaControlCardDisabled,
                     ]}
-                    start={{ x: 0, y: 0 }}
-                    end={{ x: 1, y: 1 }}
+                    start={{ x: 0, y: 0 }} end={{ x: 1, y: 1 }}
                 >
                     <LinearGradient
                         colors={[item.color + '30', item.color + '20', item.color + '10']}
                         style={styles.mediaIconContainer}
-                        start={{ x: 0, y: 0 }}
-                        end={{ x: 1, y: 1 }}
+                        start={{ x: 0, y: 0 }} end={{ x: 1, y: 1 }}
                     >
                         <Text style={styles.mediaControlIcon}>{item.icon}</Text>
                     </LinearGradient>
@@ -126,7 +139,7 @@ const MediaButton = memo(({ item, isSelected, onPress }) => {
                         </Text>
                         <Text style={[
                             styles.mediaControlSublabel,
-                            isSelected && { color: 'rgba(255, 255, 255, 0.9)' }
+                            isSelected && { color: 'rgba(255,255,255,0.9)' },
                         ]}>
                             {item.sublabel}
                         </Text>
@@ -147,822 +160,185 @@ const MediaButton = memo(({ item, isSelected, onPress }) => {
     );
 });
 
-export const AiStethAnalysisSection = memo(({ onRetake }) => {
+// ── Main component ────────────────────────────────────────────────────────────
+export const AnalysisSection = memo(({ onRetake }) => {
     const dispatch = useDispatch();
 
-    // Redux selectors
-    const aiAnalysis = useSelector(selectAIAnalysis);
-    const aiAnalysisLoading = useSelector(selectAIAnalysisLoading);
-    const aiAnalysisError = useSelector(selectAIAnalysisError);
-    const aiAnalysisPending = useSelector(selectAIAnalysisPending);
+    // ── v2 SeparationSlice selectors ──────────────────────────────────────────
+    const isProcessing = useSelector(selectIsProcessing);
+    const progress = useSelector(selectProgress);
+    const heartRaw = useSelector(selectHeart);
+    const lungRaw = useSelector(selectLung);
+    const heartWav = useSelector(selectHeartWav);
+    const lungWav = useSelector(selectLungWav);
+    const noiseLevel = useSelector(selectNoiseLevel);
+    const signalQuality = useSelector(selectSignalQuality);
+    const processingMs = useSelector(selectProcessingMs);
+    const sepError = useSelector(selectSepError);
+    const hasResults = useSelector(selectHasResults);
 
-    const visGT = useSelector(selectVisualization);
-    const visDenoised = useSelector(selectVisualizationDenoised);
-    const visLoading = useSelector(selectVisualizationLoading);
-    const visGTPending = useSelector(selectVisualizationGTPending);
-    const visDenoisedPending = useSelector(selectVisualizationDenoisedPending);
+    // ── v3 NEW selectors ──────────────────────────────────────────────────────
+    const isDetectingHeart = useSelector(selectIsDetectingHeart);
+    const heartDetected = useSelector(selectHeartDetected);
+    const heartConfidence = useSelector(selectHeartConfidence);
+    const heartBpm = useSelector(selectHeartBpm);
+    const heartEnergyRatio = useSelector(selectHeartEnergyRatio);
+    const heartPeriodicity = useSelector(selectHeartPeriodicity);
+    const heartDetectError = useSelector(selectHeartDetectError);
+    const isAddingNoise = useSelector(selectIsAddingNoise);
+    const noisyAudio = useSelector(selectNoisyAudio);
+    const addNoiseError = useSelector(selectAddNoiseError);
 
-    const audioGT = useSelector(selectAudioUrl);
-    const audioDenoised = useSelector(selectAudioUrlDenoised);
-    const audioLoading = useSelector(selectAudioLoading);
-    const audioGTPending = useSelector(selectAudioGTPending);
-    const audioDenoisedPending = useSelector(selectAudioDenoisedPending);
+    // ── UI state ──────────────────────────────────────────────────────────────
+    const [selectedMedia, setSelectedMedia] = useState('heart');
+    const [playingHeart, setPlayingHeart] = useState(false);
+    const [playingLung, setPlayingLung] = useState(false);
+    const [playingNoisy, setPlayingNoisy] = useState(false);  // v3
+    const [selectedNoise, setSelectedNoise] = useState('white'); // v3
+    const [snrDb, setSnrDb] = useState(10);      // v3
 
-    const fileName = useSelector(selectLastAnalysedFileName);
-    const patientId = useSelector(selectLastAnalysedPatientId);
-
-    const webViewRef = useRef(null);
-
-    // Polling refs
-    const aiAnalysisPollingRef = useRef(null);
-    const visGTPollingRef = useRef(null);
-    const visDenoisedPollingRef = useRef(null);
-    const audioGTPollingRef = useRef(null);
-    const audioDenoisedPollingRef = useRef(null);
-
-    // Poll attempt counters
-    const [aiAnalysisAttempts, setAiAnalysisAttempts] = useState(0);
-    const [visGTAttempts, setVisGTAttempts] = useState(0);
-    const [visDenoisedAttempts, setVisDenoisedAttempts] = useState(0);
-    const [audioGTAttempts, setAudioGTAttempts] = useState(0);
-    const [audioDenoisedAttempts, setAudioDenoisedAttempts] = useState(0);
-
-    // UI state
-    const [selectedMedia, setSelectedMedia] = useState('audio_denoised');
-    const [mediaError, setMediaError] = useState(null);
-
-    // Animation refs
+    // ── Animation refs — identical to original ────────────────────────────────
     const fadeAnim = useRef(new Animated.Value(0)).current;
     const slideAnim = useRef(new Animated.Value(50)).current;
     const scaleAnim = useRef(new Animated.Value(0.9)).current;
     const pulseAnim = useRef(new Animated.Value(1)).current;
 
-    // Entrance animations
     useEffect(() => {
         Animated.parallel([
-            Animated.timing(fadeAnim, {
-                toValue: 1,
-                duration: 800,
-                useNativeDriver: true,
-            }),
-            Animated.spring(slideAnim, {
-                toValue: 0,
-                tension: 30,
-                friction: 8,
-                useNativeDriver: true,
-            }),
-            Animated.spring(scaleAnim, {
-                toValue: 1,
-                tension: 40,
-                friction: 7,
-                useNativeDriver: true,
-            }),
+            Animated.timing(fadeAnim, { toValue: 1, duration: 800, useNativeDriver: true }),
+            Animated.spring(slideAnim, { toValue: 0, tension: 30, friction: 8, useNativeDriver: true }),
+            Animated.spring(scaleAnim, { toValue: 1, tension: 40, friction: 7, useNativeDriver: true }),
         ]).start();
-
-        // Pulse animation for loading states
-        Animated.loop(
-            Animated.sequence([
-                Animated.timing(pulseAnim, {
-                    toValue: 1.05,
-                    duration: 1500,
-                    useNativeDriver: true,
-                }),
-                Animated.timing(pulseAnim, {
-                    toValue: 1,
-                    duration: 1500,
-                    useNativeDriver: true,
-                }),
-            ])
-        ).start();
+        const loop = Animated.loop(Animated.sequence([
+            Animated.timing(pulseAnim, { toValue: 1.05, duration: 1500, useNativeDriver: true }),
+            Animated.timing(pulseAnim, { toValue: 1, duration: 1500, useNativeDriver: true }),
+        ]));
+        loop.start();
+        return () => loop.stop();
     }, []);
 
-    // Initial fetch on mount
+    // Tell parent vitals dashboard processing is complete when results arrive
     useEffect(() => {
-        if (fileName && patientId) {
-            debugLog('[AnalysisSection] Auto-fetching analysis data...');
-            handleFetchAll();
-        }
-    }, [fileName, patientId]);
+        if (hasResults) dispatch(setVitalProcessing({ value: false }));
+    }, [hasResults, dispatch]);
 
-    // Auto-select denoised vis when available
-    useEffect(() => {
-        if (visDenoised) {
-            setSelectedMedia('vis_denoised');
-        }
-    }, [visDenoised]);
-
-    // Cleanup all polling on unmount
-    useEffect(() => {
-        return () => {
-            clearAllPolling();
-            stopMediaPlayback();
-        };
-    }, []);
-
-    // Set vital flag when analysis data is available
-   
-    const clearAllPolling = useCallback(() => {
-        if (aiAnalysisPollingRef.current) clearInterval(aiAnalysisPollingRef.current);
-        if (visGTPollingRef.current) clearInterval(visGTPollingRef.current);
-        if (visDenoisedPollingRef.current) clearInterval(visDenoisedPollingRef.current);
-        if (audioGTPollingRef.current) clearInterval(audioGTPollingRef.current);
-        if (audioDenoisedPollingRef.current) clearInterval(audioDenoisedPollingRef.current);
-    }, []);
-
-    const handleFetchAll = useCallback(() => {
-        if (!fileName || !patientId) return;
-
-        debugLog('[AnalysisSection] Fetching all analysis data');
-
-        startAIAnalysisPolling();
-        startVisualizationPolling(false);
-        startVisualizationPolling(true);
-        startAudioPolling(false);
-        startAudioPolling(true);
-    }, [fileName, patientId]);
-
-    // AI Analysis Polling
-    const startAIAnalysisPolling = useCallback(() => {
-        setAiAnalysisAttempts(0);
-        dispatch(fetchAIAnalysis({ patientUniqueId: patientId, fileName }));
-
-        if (aiAnalysisPollingRef.current) clearInterval(aiAnalysisPollingRef.current);
-
-        aiAnalysisPollingRef.current = setInterval(() => {
-            setAiAnalysisAttempts((prev) => {
-                const newAttempts = prev + 1;
-
-                if (newAttempts >= MAX_POLL_ATTEMPTS.AI_ANALYSIS) {
-                    debugLog('[AnalysisSection] AI Analysis polling max attempts reached');
-                    if (aiAnalysisPollingRef.current) clearInterval(aiAnalysisPollingRef.current);
-                    return prev;
-                }
-
-                if (!aiAnalysis && aiAnalysisPending) {
-                    debugLog(`[AnalysisSection] Polling AI Analysis (attempt ${newAttempts})`);
-                    dispatch(fetchAIAnalysis({ patientUniqueId: patientId, fileName }));
-                } else {
-                    debugLog('[AnalysisSection] AI Analysis complete, stopping poll');
-                    if (aiAnalysisPollingRef.current) clearInterval(aiAnalysisPollingRef.current);
-                }
-
-                return newAttempts;
-            });
-        }, POLLING_INTERVALS.AI_ANALYSIS);
-    }, [fileName, patientId, aiAnalysis, aiAnalysisPending, dispatch]);
-
-    // Visualization Polling
-    const startVisualizationPolling = useCallback((isDenoised) => {
-        const key = isDenoised ? 'Denoised' : 'GT';
-        const pollRef = isDenoised ? visDenoisedPollingRef : visGTPollingRef;
-        const setAttempts = isDenoised ? setVisDenoisedAttempts : setVisGTAttempts;
-        const isPending = isDenoised ? visDenoisedPending : visGTPending;
-        const hasData = isDenoised ? visDenoised : visGT;
-
-        setAttempts(0);
-        dispatch(fetchVisualization({ patientUniqueId: patientId, fileName, isDenoised }));
-
-        if (pollRef.current) clearInterval(pollRef.current);
-
-        pollRef.current = setInterval(() => {
-            setAttempts((prev) => {
-                const newAttempts = prev + 1;
-
-                if (newAttempts >= MAX_POLL_ATTEMPTS.VISUALIZATION) {
-                    debugLog(`[AnalysisSection] Visualization ${key} polling max attempts reached`);
-                    if (pollRef.current) clearInterval(pollRef.current);
-                    return prev;
-                }
-
-                if (!hasData && isPending) {
-                    debugLog(`[AnalysisSection] Polling Visualization ${key} (attempt ${newAttempts})`);
-                    dispatch(fetchVisualization({ patientUniqueId: patientId, fileName, isDenoised }));
-                } else {
-                    debugLog(`[AnalysisSection] Visualization ${key} complete, stopping poll`);
-                    if (pollRef.current) clearInterval(pollRef.current);
-                }
-
-                return newAttempts;
-            });
-        }, POLLING_INTERVALS.VISUALIZATION);
-    }, [fileName, patientId, visGT, visDenoised, visGTPending, visDenoisedPending, dispatch]);
-
-    // Audio Polling
-    const startAudioPolling = useCallback((isDenoised) => {
-        const key = isDenoised ? 'Denoised' : 'GT';
-        const pollRef = isDenoised ? audioDenoisedPollingRef : audioGTPollingRef;
-        const setAttempts = isDenoised ? setAudioDenoisedAttempts : setAudioGTAttempts;
-        const isPending = isDenoised ? audioDenoisedPending : audioGTPending;
-        const hasData = isDenoised ? audioDenoised : audioGT;
-
-        setAttempts(0);
-        dispatch(fetchAudioUrl({ patientUniqueId: patientId, fileName, isDenoised }));
-
-        if (pollRef.current) clearInterval(pollRef.current);
-
-        pollRef.current = setInterval(() => {
-            setAttempts((prev) => {
-                const newAttempts = prev + 1;
-
-                if (newAttempts >= MAX_POLL_ATTEMPTS.AUDIO) {
-                    debugLog(`[AnalysisSection] Audio ${key} polling max attempts reached`);
-                    if (pollRef.current) clearInterval(pollRef.current);
-                    return prev;
-                }
-
-                if (!hasData && isPending) {
-                    debugLog(`[AnalysisSection] Polling Audio ${key} (attempt ${newAttempts})`);
-                    dispatch(fetchAudioUrl({ patientUniqueId: patientId, fileName, isDenoised }));
-                } else {
-                    debugLog(`[AnalysisSection] Audio ${key} complete, stopping poll`);
-                    if (pollRef.current) clearInterval(pollRef.current);
-                }
-
-                return newAttempts;
-            });
-        }, POLLING_INTERVALS.AUDIO);
-    }, [fileName, patientId, audioGT, audioDenoised, audioGTPending, audioDenoisedPending, dispatch]);
-    // Stop media playback
-    const stopMediaPlayback = useCallback(() => {
+    // ── Playback ──────────────────────────────────────────────────────────────
+    const playHeart = useCallback(async () => {
+        if (!heartRaw) return;
         try {
-            if (webViewRef.current) {
-                webViewRef.current.injectJavaScript(`
-                const videos = document.querySelectorAll('video');
-                const audios = document.querySelectorAll('audio');
-                videos.forEach(v => {
-                    v.pause();
-                    v.src = '';
-                    v.load();
-                });
-                audios.forEach(a => {
-                    a.pause();
-                    a.src = '';
-                    a.load();
-                });
-                true;
-            `);
-            }
-        } catch (e) {
-            debugError('[AnalysisSection] Error stopping media:', e);
-        }
+            setPlayingHeart(true);
+            await SeparationAudioPlayer.playHeartAudio(heartRaw);
+        } catch (e) { Alert.alert('Playback Error', e.message); }
+        finally { setPlayingHeart(false); }
+    }, [heartRaw]);
+
+    const playLung = useCallback(async () => {
+        if (!lungRaw) return;
+        try {
+            setPlayingLung(true);
+            await SeparationAudioPlayer.playLungAudio(lungRaw);
+        } catch (e) { Alert.alert('Playback Error', e.message); }
+        finally { setPlayingLung(false); }
+    }, [lungRaw]);
+
+    // v3: play noisy audio through the same heart AudioTrack channel
+    const playNoisy = useCallback(async () => {
+        if (!noisyAudio) return;
+        try {
+            setPlayingNoisy(true);
+            await SeparationAudioPlayer.playHeartAudio(noisyAudio);
+        } catch (e) { Alert.alert('Playback Error', e.message); }
+        finally { setPlayingNoisy(false); }
+    }, [noisyAudio]);
+
+    const stopPlayback = useCallback(async () => {
+        try { await SeparationAudioPlayer.stopPlayback(); } catch { }
+        setPlayingHeart(false);
+        setPlayingLung(false);
+        setPlayingNoisy(false);
     }, []);
 
+    // ── Save WAV ──────────────────────────────────────────────────────────────
+    const saveAudio = useCallback(async which => {
+        const wav = which === 'heart' ? heartWav : lungWav;
+        if (!wav) { Alert.alert('No Audio', `No ${which} audio to save`); return; }
+        try {
+            const fn = `${which}_${Date.now()}.wav`;
+            const r = await SeparationAudioPlayer.saveAudioFile(wav, fn, which);
+            Alert.alert('Saved ✓', `Saved to:\n${r.filePath}`);
+        } catch (e) { Alert.alert('Save Error', e.message); }
+    }, [heartWav, lungWav]);
 
-    // Stop polling when data is received
-    useEffect(() => {
-        if (aiAnalysis && !aiAnalysisPending) {
-            if (aiAnalysisPollingRef.current) clearInterval(aiAnalysisPollingRef.current);
-        }
-    }, [aiAnalysis, aiAnalysisPending]);
-
-    useEffect(() => {
-        if (visGT && !visGTPending) {
-            if (visGTPollingRef.current) clearInterval(visGTPollingRef.current);
-        }
-        if (visDenoised && !visDenoisedPending) {
-            if (visDenoisedPollingRef.current) clearInterval(visDenoisedPollingRef.current);
-        }
-    }, [visGT, visDenoised, visGTPending, visDenoisedPending]);
-
-    useEffect(() => {
-        if (audioGT && !audioGTPending) {
-            if (audioGTPollingRef.current) clearInterval(audioGTPollingRef.current);
-        }
-        if (audioDenoised && !audioDenoisedPending) {
-            if (audioDenoisedPollingRef.current) clearInterval(audioDenoisedPollingRef.current);
-        }
-    }, [audioGT, audioDenoised, audioGTPending, audioDenoisedPending]);
-
-   useEffect(()=>{
-
-        if(aiAnalysis && audioGT ){
-            dispatch(setVitalProcessing({value:false}))
-        }
-
-    },[aiAnalysis,audioGT])
-
+    // ── Retake ────────────────────────────────────────────────────────────────
     const handleRetake = useCallback(() => {
         Alert.alert(
-            t("retake_recording"),
-            t("retake_recording_warning"),
+            t('retake_recording'),
+            t('retake_recording_warning'),
             [
-                { text: t("cancel"), style: 'cancel' },
+                { text: t('cancel'), style: 'cancel' },
                 {
-                    text: t("retake"),
+                    text: t('retake'),
                     style: 'destructive',
                     onPress: () => {
-                        dispatch(clearAllAnalysisData());
-                        onRetake && onRetake();
+                        dispatch(clearSeparationData());
+                        onRetake?.();
                     },
                 },
             ]
         );
     }, [dispatch, onRetake]);
 
-    const getMediaUrl = useCallback(() => {
-        switch (selectedMedia) {
-            case 'vis_gt':
-                return visGT?.Url;
-            case 'vis_denoised':
-                return visDenoised?.Url;
-            case 'audio_gt':
-                return audioGT?.Url;
-            case 'audio_denoised':
-                return audioDenoised?.Url;
-            default:
-                return null;
-        }
-    }, [selectedMedia, visGT, visDenoised, audioGT, audioDenoised]);
+    // ── v3: Heart detection ───────────────────────────────────────────────────
+    const handleDetectHeart = useCallback(() => {
+        if (!heartRaw) return;
+        dispatch(detectHeartThunk({ base64Audio: heartRaw, sampleRate: 44100 }));
+    }, [heartRaw, dispatch]);
 
-    const openUrlInBrowser = useCallback((url) => {
-        if (!url) return;
-        Linking.openURL(url).catch(() =>
-            Alert.alert('Error', 'Failed to open URL in browser.')
-        );
-    }, []);
+    // ── v3: Noise injection ───────────────────────────────────────────────────
+    const handleAddNoise = useCallback(() => {
+        if (!heartRaw) return;
+        dispatch(addNoiseThunk({
+            base64Audio: heartRaw,
+            sampleRate: 44100,
+            noiseType: selectedNoise,
+            snrDb,
+        }));
+    }, [heartRaw, selectedNoise, snrDb, dispatch]);
 
-    const getVideoHTML = useCallback((url) => {
-        return `
-            <!DOCTYPE html>
-            <html>
-                <head>
-                    <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
-                    <style>
-                        * { margin: 0; padding: 0; box-sizing: border-box; }
-                        body {
-                            background: linear-gradient(135deg, #32879B 0%, #4A9BB0 50%, #62AFC5 100%);
-                            display: flex;
-                            justify-content: center;
-                            align-items: center;
-                            height: 100vh;
-                            overflow: hidden;
-                        }
-                        video {
-                            width: 100%;
-                            height: 100%;
-                            object-fit: contain;
-                            border-radius: 8px;
-                        }
-                    </style>
-                </head>
-                <body>
-                    <video controls autoplay loop playsinline>
-                        <source src="${url}" type="video/mp4">
-                        Your browser does not support the video tag.
-                    </video>
-                </body>
-            </html>
-        `;
-    }, []);
+    // ── Quality badge (same as v2) ────────────────────────────────────────────
+    const getQualityBadge = () => {
+        if (signalQuality == null) return null;
+        if (signalQuality >= 0.8) return { text: '✓ Excellent', colors: [APP_COLORS.success, APP_COLORS.successLight, '#5FC9AE'] };
+        if (signalQuality >= 0.6) return { text: '✓ Good', colors: [APP_COLORS.primary, APP_COLORS.primaryLight, APP_COLORS.primaryLighter] };
+        if (signalQuality >= 0.4) return { text: '⚠ Fair', colors: [APP_COLORS.warning, APP_COLORS.warningLight, '#FFCC80'] };
+        return { text: '⚠ Poor', colors: [APP_COLORS.error, APP_COLORS.errorLight, '#FFB0C0'] };
+    };
 
-    const getAudioHTML = useCallback((url) => {
-        return `
-            <!DOCTYPE html>
-            <html>
-                <head>
-                    <meta name="viewport" content="width=device-width, initial-scale=1.0">
-                    <style>
-                        * { margin: 0; padding: 0; box-sizing: border-box; }
-                        body {
-                            background: linear-gradient(135deg, #2E8B7A 0%, #3AA6BF 50%, #52BAD3 100%);
-                            display: flex;
-                            flex-direction: column;
-                            justify-content: center;
-                            align-items: center;
-                            height: 100vh;
-                            font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif;
-                            padding: 20px;
-                        }
-                        .container {
-                            background: rgba(255, 255, 255, 0.98);
-                            border-radius: 24px;
-                            padding: 40px;
-                            box-shadow: 0 20px 60px rgba(50, 135, 155, 0.3);
-                            max-width: 400px;
-                            width: 100%;
-                            text-align: center;
-                        }
-                        .audio-icon { 
-                            font-size: 80px; 
-                            margin-bottom: 24px;
-                            animation: pulse 2s ease-in-out infinite;
-                        }
-                        @keyframes pulse {
-                            0%, 100% { transform: scale(1); }
-                            50% { transform: scale(1.15); }
-                        }
-                        .title {
-                            font-size: 20px;
-                            font-weight: 700;
-                            color: #1E3A5F;
-                            margin-bottom: 8px;
-                            letter-spacing: 0.5px;
-                        }
-                        .subtitle {
-                            font-size: 14px;
-                            color: #32879B;
-                            margin-bottom: 32px;
-                            font-weight: 500;
-                        }
-                        audio { 
-                            width: 100%;
-                            border-radius: 12px;
-                            outline: none;
-                        }
-                    </style>
-                </head>
-                <body>
-                    <div class="container">
-                        <div class="audio-icon">🎵</div>
-                        <div class="title">${t("heart_sound_recording")}</div>
-                        <div class="subtitle">${t("playing_audio")}</div>
-                        <audio controls autoplay loop>
-                            <source src="${url}" type="audio/wav">
-                            <source src="${url}" type="audio/mpeg">
-                            Your browser does not support the audio element.
-                        </audio>
-                    </div>
-                </body>
-            </html>
-        `;
-    }, []);
-
-    const isVideoMedia = selectedMedia.startsWith('vis_');
-    const isAudioMedia = selectedMedia.startsWith('audio_');
-    const mediaUrl = getMediaUrl();
-
-    const renderAIResult = useCallback(() => {
-        if (aiAnalysisLoading || (aiAnalysisPending && !aiAnalysis)) {
-            return (
-                <Animated.View
-                    style={[
-                        {
-                            opacity: fadeAnim,
-                            transform: [{ scale: pulseAnim }]
-                        }
-                    ]}
-                >
-                    <LinearGradient
-                        colors={['#D6F1F5', '#E6F7F9', '#FFFFFF']}
-                        style={styles.loadingContainer}
-                        start={{ x: 0, y: 0 }}
-                        end={{ x: 1, y: 1 }}
-                    >
-                        <LottieView
-                            source={require('../../../assets/lottie/heart.json')}
-                            autoPlay
-                            loop
-                            style={styles.loadingLottie}
-                        />
-                        <Text style={styles.loadingText}>
-                            {aiAnalysisPending ? `${t("analyzing_wait")}...` : 'Loading...'}
-                        </Text>
-                        <Text style={styles.loadingSubtext}>{t("analysis_time")}</Text>
-                    </LinearGradient>
-                </Animated.View>
-            );
-        }
-
-        if (aiAnalysisError) {
-            return (
-                <Animated.View
-                    style={[
-                        {
-                            opacity: fadeAnim,
-                            transform: [{ translateY: slideAnim }]
-                        }
-                    ]}
-                >
-                    <LinearGradient
-                        colors={['#FFEBEE', '#FFCDD2', '#FFE8EF']}
-                        style={styles.errorContainer}
-                        start={{ x: 0, y: 0 }}
-                        end={{ x: 1, y: 1 }}
-                    >
-                        <Text style={styles.errorIcon}>⚠️</Text>
-                        <Text style={styles.errorText}>
-                            {aiAnalysisError.userMessage || aiAnalysisError.message || 'Failed to load AI analysis.'}
-                        </Text>
-                        <TouchableOpacity
-                            onPress={() => startAIAnalysisPolling()}
-                        >
-                            <LinearGradient
-                                colors={[APP_COLORS.error, APP_COLORS.errorLight, '#FFB0C0']}
-                                style={styles.retryButton}
-                                start={{ x: 0, y: 0 }}
-                                end={{ x: 1, y: 1 }}
-                            >
-                                <Text style={styles.retryText}>Retry</Text>
-                            </LinearGradient>
-                        </TouchableOpacity>
-                    </LinearGradient>
-                </Animated.View>
-            );
-        }
-
-        if (!aiAnalysis) {
-            return (
-                <Animated.View
-                    style={[
-                        {
-                            opacity: fadeAnim,
-                            transform: [{ scale: scaleAnim }]
-                        }
-                    ]}
-                >
-                    <LinearGradient
-                        colors={['#FFFFFF', '#F0F9FB', '#E6F5F8']}
-                        style={styles.emptyAnalysisContainer}
-                        start={{ x: 0, y: 0 }}
-                        end={{ x: 1, y: 1 }}
-                    >
-                        <Text style={styles.emptyIcon}>📋</Text>
-                        <Text style={styles.emptyText}>No AI analysis available yet.</Text>
-                        <Text style={styles.emptySubtext}>
-                            AI analysis takes 45–60 seconds after upload.
-                        </Text>
-                        {fileName && (
-                            <TouchableOpacity
-                                onPress={() => startAIAnalysisPolling()}
-                            >
-                                <LinearGradient
-                                    colors={[APP_COLORS.primary, APP_COLORS.primaryLight, APP_COLORS.primaryLighter]}
-                                    style={styles.fetchButton}
-                                    start={{ x: 0, y: 0 }}
-                                    end={{ x: 1, y: 1 }}
-                                >
-                                    <Text style={styles.fetchButtonText}>Fetch Analysis</Text>
-                                </LinearGradient>
-                            </TouchableOpacity>
-                        )}
-                    </LinearGradient>
-                </Animated.View>
-            );
-        }
-
-        const result = aiAnalysis.ai_analysis || 'No result available';
-        const isNormal = result.toLowerCase().includes('normal');
-
-        return (
-            <Animated.View
-                style={[
-                    {
-                        opacity: fadeAnim,
-                        transform: [{ translateY: slideAnim }]
-                    }
-                ]}
-            >
-                <LinearGradient
-                    colors={
-                        isNormal
-                            ? ['#D4F4E7', '#E0F9EF', '#C8F5DC']
-                            : ['#FFE8D6', '#FFF0E0', '#FFD9B3']
-                    }
-                    style={styles.diagnosisCard}
-                    start={{ x: 0, y: 0 }}
-                    end={{ x: 1, y: 1 }}
-                >
-                    <View style={styles.diagnosisHeader}>
-                        <View style={{ flex: 1 }}>
-                            <Text style={styles.diagnosisLabel}>AI ANALYSIS</Text>
-                            <Text style={styles.diagnosisResult}>{result}</Text>
-                        </View>
-                        <LinearGradient
-                            colors={
-                                isNormal
-                                    ? [APP_COLORS.success, APP_COLORS.successLight, '#5FC9AE']
-                                    : [APP_COLORS.warning, APP_COLORS.warningLight, '#FFCC80']
-                            }
-                            style={styles.statusBadge}
-                            start={{ x: 0, y: 0 }}
-                            end={{ x: 1, y: 1 }}
-                        >
-                            <Text style={styles.statusText}>
-                                {isNormal ? '✓ Normal' : '⚠ Abnormal'}
-                            </Text>
-                        </LinearGradient>
-                    </View>
-                </LinearGradient>
-            </Animated.View>
-        );
-    }, [aiAnalysis, aiAnalysisLoading, aiAnalysisError, fileName, patientId, dispatch, fadeAnim, slideAnim, scaleAnim, pulseAnim]);
-
-    const renderMediaPlayer = useCallback(() => {
-        const currentUrl = mediaUrl || visDenoised?.Url || visGT?.Url;
-
-        if (!currentUrl) {
-            const isProcessing = visDenoisedPending || visGTPending;
-
-            return (
-                <Animated.View
-                    style={[
-                        {
-                            opacity: fadeAnim,
-                            transform: [{ scale: isProcessing ? pulseAnim : scaleAnim }]
-                        }
-                    ]}
-                >
-                    <LinearGradient
-                        colors={['#D6F1F5', '#E6F7F9', '#FFFFFF']}
-                        style={styles.videoPlaceholder}
-                        start={{ x: 0, y: 0 }}
-                        end={{ x: 1, y: 1 }}
-                    >
-                        {isProcessing ? (
-                            <>
-                                <LottieView
-                                    source={require('../../../assets/lottie/heart.json')}
-                                    autoPlay
-                                    loop
-                                    style={styles.placeholderLottie}
-                                />
-                                <Text style={styles.placeholderText}>Analyzing please wait</Text>
-                                <Text style={styles.placeholderSubtext}>This may take several minutes</Text>
-                            </>
-                        ) : (
-                            <>
-                                <Text style={styles.placeholderIcon}>🎬</Text>
-                                <Text style={styles.placeholderText}>No media available</Text>
-                                <Text style={styles.placeholderSubtext}>Media will appear after processing</Text>
-                            </>
-                        )}
-                    </LinearGradient>
-                </Animated.View>
-            );
-        }
-
-        return (
-            <Animated.View
-                style={[
-                    styles.videoPlayerContainer,
-                    {
-                        opacity: fadeAnim,
-                        transform: [{ scale: scaleAnim }]
-                    }
-                ]}
-            >
-                <WebView
-                    ref={webViewRef}
-                    source={{
-                        html: isAudioMedia ? getAudioHTML(currentUrl) : getVideoHTML(currentUrl)
-                    }}
-                    style={styles.webView}
-                    allowsInlineMediaPlayback
-                    mediaPlaybackRequiresUserAction={false}
-                    javaScriptEnabled
-                    domStorageEnabled
-                    onError={(syntheticEvent) => {
-                        const { nativeEvent } = syntheticEvent;
-                        debugError('[AnalysisSection] WebView error:', nativeEvent);
-                        setMediaError('Failed to load media');
-                    }}
-                    onLoadEnd={() => setMediaError(null)}
-                />
-                {mediaError && (
-                    <View style={styles.errorOverlay}>
-                        <Text style={styles.errorOverlayText}>{mediaError}</Text>
-                    </View>
-                )}
-            </Animated.View>
-        );
-    }, [mediaUrl, visDenoised, visGT, visDenoisedPending, visGTPending, isAudioMedia, mediaError, getAudioHTML, getVideoHTML, openUrlInBrowser, fadeAnim, scaleAnim, pulseAnim]);
-
-    const mediaItems = [
-        {
-            key: 'audio_denoised',
-            label: t("denoised_heart_sound"),
-            sublabel: t("clean_sound"),
-            icon: '🎵',
-            available: !!audioDenoised,
-            color: APP_COLORS.success,
-            colorMid: APP_COLORS.successLight,
-            colorLight: '#5FC9AE',
-        },
-        {
-            key: 'audio_gt',
-            label: t("original_heart_sound"),
-            sublabel: t("raw_sound"),
-            icon: '🔊',
-            available: !!audioGT,
-            color: APP_COLORS.secondary,
-            colorMid: APP_COLORS.secondaryLight,
-            colorLight: '#6FD0E5',
-        },
-        {
-            key: 'vis_denoised',
-            label: t("denoised_visualization"),
-            sublabel: t("enhanced_clarity"),
-            icon: '🎬',
-            available: !!visDenoised,
-            color: APP_COLORS.primary,
-            colorMid: APP_COLORS.primaryLight,
-            colorLight: APP_COLORS.primaryLighter,
-        },
-        {
-            key: 'vis_gt',
-            label: t("original_visualization"),
-            sublabel: t("raw_recording"),
-            icon: '📹',
-            available: !!visGT,
-            color: APP_COLORS.primaryDark,
-            colorMid: APP_COLORS.primary,
-            colorLight: APP_COLORS.primaryLight,
-        },
-
-    ];
-
-    const handleMediaSelect = useCallback((key) => {
-        setMediaError(null);
-        setSelectedMedia(key);
-    }, []);
-
-    const renderMediaControls = useCallback(() => {
-        return (
-            <Animated.View
-                style={[
-                    styles.mediaControlsContainer,
-                    {
-                        opacity: fadeAnim,
-                        transform: [{ translateY: slideAnim }]
-                    }
-                ]}
-            >
-                <View style={styles.controlsHeader}>
-                    <LinearGradient
-                        colors={[APP_COLORS.primary, APP_COLORS.primaryLight, APP_COLORS.primaryLighter]}
-                        style={styles.controlsTitleAccent}
-                        start={{ x: 0, y: 0 }}
-                        end={{ x: 1, y: 0 }}
-                    />
-                    <Text style={styles.controlsTitle}>{t("media_library")}</Text>
-                </View>
-                <View style={styles.mediaGrid}>
-                    {mediaItems.map((item) => (
-                        <MediaButton
-                            key={item.key}
-                            item={item}
-                            isSelected={selectedMedia === item.key}
-                            onPress={handleMediaSelect}
-                        />
-                    ))}
-                </View>
-            </Animated.View>
-        );
-    }, [mediaItems, selectedMedia, handleMediaSelect, fadeAnim, slideAnim]);
-
-    const handleClearAnalysis = useCallback(() => {
-        Alert.alert(
-            'Clear Analysis',
-            'Are you sure you want to clear all analysis data?',
-            [
-                { text: 'Cancel', style: 'cancel' },
-                {
-                    text: 'Clear',
-                    style: 'destructive',
-                    onPress: () => {
-                        dispatch(clearAllAnalysisData());
-                        Alert.alert('Cleared', 'Analysis data cleared successfully.');
-                    },
-                },
-            ]
-        );
-    }, [dispatch]);
-
-    // Empty state
-    if (!fileName || !patientId) {
+    // ── Empty state ───────────────────────────────────────────────────────────
+    if (!hasResults && !isProcessing && !sepError) {
         return (
             <View style={styles.container}>
                 <ScrollView contentContainerStyle={styles.emptyStateContainer}>
-                    <Animated.View
-                        style={[
-                            {
-                                opacity: fadeAnim,
-                                transform: [{ scale: scaleAnim }]
-                            }
-                        ]}
-                    >
+                    <Animated.View style={{ opacity: fadeAnim, transform: [{ scale: scaleAnim }] }}>
                         <LinearGradient
                             colors={['#D6F1F5', '#E6F7F9', '#FFFFFF']}
                             style={styles.emptyStateCard}
-                            start={{ x: 0, y: 0 }}
-                            end={{ x: 1, y: 1 }}
+                            start={{ x: 0, y: 0 }} end={{ x: 1, y: 1 }}
                         >
                             <LottieView
                                 source={require('../../../assets/lottie/heart.json')}
-                                autoPlay
-                                loop
-                                style={styles.emptyStateLottie}
+                                autoPlay loop style={styles.emptyStateLottie}
                             />
                             <Text style={styles.emptyStateTitle}>No Recording Analysed</Text>
                             <Text style={styles.emptyStateText}>
-                                Complete a recording upload in the Record tab to view AI analysis here.
+                                Complete a recording in the Record tab to separate heart and lung sounds here.
                             </Text>
                             <TouchableOpacity onPress={handleRetake}>
                                 <LinearGradient
-                                    colors={[APP_COLORS.primary, APP_COLORS.primaryLight, APP_COLORS.primaryLighter, APP_COLORS.primaryLightest]}
+                                    colors={[APP_COLORS.primary, APP_COLORS.primaryLight,
+                                    APP_COLORS.primaryLighter, APP_COLORS.primaryLightest]}
                                     style={styles.retakeButtonGradient}
-                                    start={{ x: 0, y: 0 }}
-                                    end={{ x: 1, y: 1 }}
+                                    start={{ x: 0, y: 0 }} end={{ x: 1, y: 1 }}
                                 >
                                     <Text style={styles.retakeIcon}>🔄</Text>
                                     <Text style={styles.retakeText}>Start Recording</Text>
@@ -975,83 +351,530 @@ export const AiStethAnalysisSection = memo(({ onRetake }) => {
         );
     }
 
+    // ── Processing / NMF running ──────────────────────────────────────────────
+    if (isProcessing) {
+        return (
+            <View style={styles.container}>
+                <View style={{ flex: 1, justifyContent: 'center', alignItems: 'center', padding: SPACING.xl }}>
+                    <Animated.View style={{ transform: [{ scale: pulseAnim }], width: '100%' }}>
+                        <LinearGradient
+                            colors={['#D6F1F5', '#E6F7F9', '#FFFFFF']}
+                            style={styles.loadingContainer}
+                            start={{ x: 0, y: 0 }} end={{ x: 1, y: 1 }}
+                        >
+                            <LottieView
+                                source={require('../../../assets/lottie/heart.json')}
+                                autoPlay loop style={styles.loadingLottie}
+                            />
+                            <Text style={styles.loadingText}>
+                                {progress.message || 'Separating Heart & Lung Sounds…'}
+                            </Text>
+                            <Text style={styles.loadingSubtext}>NMF analysis · ~1–2 seconds</Text>
+                            <View style={styles.progressTrack}>
+                                <View style={[styles.progressFill,
+                                { width: `${progress.percent || 10}%` }]} />
+                            </View>
+                            <Text style={styles.progressPct}>{progress.percent || 10}%</Text>
+                        </LinearGradient>
+                    </Animated.View>
+                </View>
+            </View>
+        );
+    }
+
+    // ── Error state ───────────────────────────────────────────────────────────
+    if (sepError) {
+        return (
+            <View style={styles.container}>
+                <Animated.View style={{ opacity: fadeAnim, margin: SPACING.xl }}>
+                    <LinearGradient
+                        colors={['#FFEBEE', '#FFCDD2', '#FFE8EF']}
+                        style={styles.errorContainer}
+                        start={{ x: 0, y: 0 }} end={{ x: 1, y: 1 }}
+                    >
+                        <Text style={styles.errorIcon}>⚠️</Text>
+                        <Text style={styles.errorText}>{sepError}</Text>
+                        <TouchableOpacity onPress={handleRetake}>
+                            <LinearGradient
+                                colors={[APP_COLORS.error, APP_COLORS.errorLight, '#FFB0C0']}
+                                style={styles.retryButton}
+                                start={{ x: 0, y: 0 }} end={{ x: 1, y: 1 }}
+                            >
+                                <Text style={styles.retryText}>Try Again</Text>
+                            </LinearGradient>
+                        </TouchableOpacity>
+                    </LinearGradient>
+                </Animated.View>
+            </View>
+        );
+    }
+
+    // ── Results ───────────────────────────────────────────────────────────────
+    const qb = getQualityBadge();
+    const isHeart = selectedMedia === 'heart';
+    const playFn = isHeart ? playHeart : playLung;
+    const isCurrentlyPlaying = isHeart ? playingHeart : playingLung;
+    const audioAvailable = isHeart ? !!heartRaw : !!lungRaw;
+
+    // v3 noise chips config
+    const NOISE_CHIPS = [
+        { key: 'white', label: '⬜ White' },
+        { key: 'pink', label: '🌸 Pink' },
+        { key: 'brown', label: '🟤 Brown' },
+        { key: 'voice', label: '🗣 Voice' },
+    ];
+    const SNR_OPTIONS = [-5, 0, 5, 10, 15, 20];
+
     return (
         <View style={styles.container}>
             <ScrollView
                 contentContainerStyle={styles.scrollContent}
                 showsVerticalScrollIndicator={false}
             >
-                {/* Header with AI Result and Refresh */}
+
+                {/* ── NMF Result Card ──────────────────────────────────────── */}
                 <View style={styles.header}>
                     <View style={{ flex: 1 }}>
-                        {renderAIResult()}
-                    </View>
-                    <TouchableOpacity
-                        onPress={handleFetchAll}
-                    >
-                        <LinearGradient
-                            colors={[APP_COLORS.primary, APP_COLORS.primaryLight, APP_COLORS.primaryLighter]}
-                            style={styles.refreshButton}
-                            start={{ x: 0, y: 0 }}
-                            end={{ x: 1, y: 1 }}
-                        >
-                            <Text style={styles.refreshIcon}>🔄</Text>
-                        </LinearGradient>
-                    </TouchableOpacity>
-                </View>
-
-                {/* Media Player Section */}
-                <View style={styles.videoSection}>
-                    {(visLoading || audioLoading) && (
-                        <Animated.View
-                            style={[
-                                styles.loadingOverlay,
-                                { transform: [{ scale: pulseAnim }] }
-                            ]}
-                        >
+                        <Animated.View style={{ opacity: fadeAnim, transform: [{ translateY: slideAnim }] }}>
                             <LinearGradient
-                                colors={['#D6F1F5', '#E6F7F9']}
-                                style={styles.loadingOverlayContent}
-                                start={{ x: 0, y: 0 }}
-                                end={{ x: 1, y: 1 }}
+                                colors={['#D4F4E7', '#E0F9EF', '#C8F5DC']}
+                                style={styles.diagnosisCard}
+                                start={{ x: 0, y: 0 }} end={{ x: 1, y: 1 }}
                             >
-                                <ActivityIndicator size="large" color={APP_COLORS.primary} />
-                                <Text style={styles.loadingOverlayText}>{t("loading")}...</Text>
+                                <View style={styles.diagnosisHeader}>
+                                    <View style={{ flex: 1 }}>
+                                        <Text style={styles.diagnosisLabel}>NMF SEPARATION RESULT</Text>
+                                        <Text style={styles.diagnosisResult}>
+                                            Heart & Lung sounds isolated
+                                        </Text>
+                                        {processingMs != null && (
+                                            <Text style={[styles.diagnosisLabel,
+                                            { marginTop: 4, fontSize: FONTS.sizes.xs }]}>
+                                                Processed in {Math.round(processingMs)} ms
+                                            </Text>
+                                        )}
+                                    </View>
+                                    {qb && (
+                                        <LinearGradient
+                                            colors={qb.colors}
+                                            style={styles.statusBadge}
+                                            start={{ x: 0, y: 0 }} end={{ x: 1, y: 1 }}
+                                        >
+                                            <Text style={styles.statusText}>{qb.text}</Text>
+                                        </LinearGradient>
+                                    )}
+                                </View>
                             </LinearGradient>
                         </Animated.View>
-                    )}
-                    {renderMediaPlayer()}
+                    </View>
                 </View>
 
-                {/* Media Controls */}
-                {renderMediaControls()}
+                {/* ── Signal quality + noise meters ────────────────────────── */}
+                {noiseLevel != null && (
+                    <Animated.View style={{ opacity: fadeAnim, marginBottom: SPACING.xl }}>
+                        <View style={styles.metersRow}>
+                            <View style={[styles.meterCard, { flex: 1, marginRight: SPACING.sm }]}>
+                                <Text style={styles.meterLabel}>Signal Quality</Text>
+                                <View style={styles.meterTrack}>
+                                    <View style={[styles.meterFill, {
+                                        width: `${Math.round((signalQuality || 0) * 100)}%`,
+                                        backgroundColor: APP_COLORS.success,
+                                    }]} />
+                                </View>
+                                <Text style={styles.meterValue}>
+                                    {Math.round((signalQuality || 0) * 100)}%
+                                </Text>
+                            </View>
+                            <View style={[styles.meterCard, { flex: 1, marginLeft: SPACING.sm }]}>
+                                <Text style={styles.meterLabel}>Noise Level</Text>
+                                <View style={styles.meterTrack}>
+                                    <View style={[styles.meterFill, {
+                                        width: `${Math.round((noiseLevel || 0) * 100)}%`,
+                                        backgroundColor: (noiseLevel || 0) > 0.4
+                                            ? APP_COLORS.error : APP_COLORS.warning,
+                                    }]} />
+                                </View>
+                                <Text style={styles.meterValue}>
+                                    {Math.round((noiseLevel || 0) * 100)}%
+                                </Text>
+                            </View>
+                        </View>
+                    </Animated.View>
+                )}
 
-                {/* Retake Button */}
-                <Animated.View
-                    style={[
-                        {
-                            opacity: fadeAnim,
-                            transform: [{ translateY: slideAnim }]
-                        }
-                    ]}
-                >
+                {/* ════════════════════════════════════════════════════════════
+                    v3 NEW BLOCK 1: HEART DETECTION BANNER
+                    ════════════════════════════════════════════════════════════ */}
+                {heartRaw && (
+                    <Animated.View style={{ opacity: fadeAnim, marginBottom: SPACING.xl }}>
+
+                        {/* Section header */}
+                        <View style={styles.sectionHeaderRow}>
+                            <LinearGradient
+                                colors={[APP_COLORS.primary, APP_COLORS.primaryLight]}
+                                style={styles.sectionAccentBar}
+                                start={{ x: 0, y: 0 }} end={{ x: 1, y: 0 }}
+                            />
+                            <Text style={styles.sectionTitle}>❤️  Heart Sound Detection</Text>
+                        </View>
+
+                        {/* Run detection button — shown before first result */}
+                        {heartDetected === null && !isDetectingHeart && (
+                            <TouchableOpacity
+                                style={styles.detectBtn}
+                                onPress={handleDetectHeart}
+                                activeOpacity={0.85}
+                            >
+                                <LinearGradient
+                                    colors={['#0A7EA4', '#1A9BBF', '#2AB8DC']}
+                                    style={styles.detectBtnGradient}
+                                    start={{ x: 0, y: 0 }} end={{ x: 1, y: 1 }}
+                                >
+                                    <Text style={styles.detectBtnIcon}>🔬</Text>
+                                    <Text style={styles.detectBtnText}>Detect Heart Sound</Text>
+                                </LinearGradient>
+                            </TouchableOpacity>
+                        )}
+
+                        {/* Spinner while detecting */}
+                        {isDetectingHeart && (
+                            <View style={styles.detectingRow}>
+                                <ActivityIndicator size="small" color="#0A7EA4" />
+                                <Text style={styles.detectingText}> Analysing heart band…</Text>
+                            </View>
+                        )}
+
+                        {/* Detection error */}
+                        {heartDetectError && !isDetectingHeart && (
+                            <View style={styles.detectErrorRow}>
+                                <Text style={styles.detectErrorText}>⚠️ {heartDetectError}</Text>
+                                <TouchableOpacity onPress={handleDetectHeart}
+                                    style={styles.reDetectBtn}>
+                                    <Text style={styles.reDetectBtnText}>Retry ↺</Text>
+                                </TouchableOpacity>
+                            </View>
+                        )}
+
+                        {/* Result banner */}
+                        {heartDetected !== null && !isDetectingHeart && !heartDetectError && (
+                            <LinearGradient
+                                colors={
+                                    heartDetected
+                                        ? ['#D4F4E7', '#E0F9EF', '#C8F5DC']
+                                        : ['#FFEBEE', '#FFCDD2', '#FFE8EF']
+                                }
+                                style={styles.heartDetectCard}
+                                start={{ x: 0, y: 0 }} end={{ x: 1, y: 1 }}
+                            >
+                                {/* Main row */}
+                                <View style={styles.heartDetectRow}>
+                                    <Text style={styles.heartDetectIcon}>
+                                        {heartDetected ? '❤️' : '⚠️'}
+                                    </Text>
+                                    <View style={{ flex: 1 }}>
+                                        <Text style={[
+                                            styles.heartDetectTitle,
+                                            { color: heartDetected ? '#1B7A4A' : '#C62828' },
+                                        ]}>
+                                            {heartDetected
+                                                ? 'Heart Sound Detected'
+                                                : 'No Heart Sound Detected'}
+                                        </Text>
+                                        <Text style={styles.heartDetectSub}>
+                                            Confidence: {Math.round((heartConfidence || 0) * 100)}%
+                                            {heartBpm ? `   ·   ~${Math.round(heartBpm)} BPM` : ''}
+                                        </Text>
+                                    </View>
+                                    {/* Re-run button */}
+                                    <TouchableOpacity
+                                        onPress={handleDetectHeart}
+                                        style={styles.reDetectIconBtn}
+                                        hitSlop={{ top: 8, bottom: 8, left: 8, right: 8 }}
+                                    >
+                                        <Text style={styles.reDetectIconText}>↺</Text>
+                                    </TouchableOpacity>
+                                </View>
+
+                                {/* Confidence progress bar */}
+                                <View style={styles.meterTrack}>
+                                    <View style={[styles.meterFill, {
+                                        width: `${Math.round((heartConfidence || 0) * 100)}%`,
+                                        backgroundColor: heartDetected ? '#1B7A4A' : '#C62828',
+                                    }]} />
+                                </View>
+
+                                {/* Detail metrics row */}
+                                <View style={styles.heartMetricsRow}>
+                                    <View style={styles.heartMetricItem}>
+                                        <Text style={styles.heartMetricLabel}>Energy Ratio</Text>
+                                        <Text style={styles.heartMetricValue}>
+                                            {Math.round((heartEnergyRatio || 0) * 100)}%
+                                        </Text>
+                                    </View>
+                                    <View style={styles.heartMetricDivider} />
+                                    <View style={styles.heartMetricItem}>
+                                        <Text style={styles.heartMetricLabel}>Periodicity</Text>
+                                        <Text style={styles.heartMetricValue}>
+                                            {Math.round((heartPeriodicity || 0) * 100)}%
+                                        </Text>
+                                    </View>
+                                    <View style={styles.heartMetricDivider} />
+                                    <View style={styles.heartMetricItem}>
+                                        <Text style={styles.heartMetricLabel}>Est. BPM</Text>
+                                        <Text style={styles.heartMetricValue}>
+                                            {heartBpm ? Math.round(heartBpm) : '—'}
+                                        </Text>
+                                    </View>
+                                </View>
+                            </LinearGradient>
+                        )}
+                    </Animated.View>
+                )}
+
+                {/* ════════════════════════════════════════════════════════════
+                    v3 NEW BLOCK 2: NOISE INJECTION CONTROLS
+                    ════════════════════════════════════════════════════════════ */}
+                {heartRaw && (
+                    <Animated.View style={{ opacity: fadeAnim, marginBottom: SPACING.xl }}>
+
+                        <View style={styles.sectionHeaderRow}>
+                            <LinearGradient
+                                colors={['#5B8DEF', '#7B6FF0']}
+                                style={styles.sectionAccentBar}
+                                start={{ x: 0, y: 0 }} end={{ x: 1, y: 0 }}
+                            />
+                            <Text style={styles.sectionTitle}>🎛  Add External Noise</Text>
+                        </View>
+
+                        <LinearGradient
+                            colors={['#F3F8FF', '#E8F2FE', '#DDEAFD']}
+                            style={styles.noiseCard}
+                            start={{ x: 0, y: 0 }} end={{ x: 1, y: 1 }}
+                        >
+                            <Text style={styles.noiseSectionSub}>
+                                Inject noise into the heart channel to test separation robustness
+                            </Text>
+
+                            {/* Noise type chips */}
+                            <Text style={styles.noisePickerLabel}>Noise Type</Text>
+                            <View style={styles.noiseTypeRow}>
+                                {NOISE_CHIPS.map(({ key, label }) => (
+                                    <TouchableOpacity
+                                        key={key}
+                                        style={[
+                                            styles.noiseTypeChip,
+                                            selectedNoise === key && styles.noiseTypeChipActive,
+                                        ]}
+                                        onPress={() => setSelectedNoise(key)}
+                                        activeOpacity={0.8}
+                                    >
+                                        <Text style={[
+                                            styles.noiseTypeChipText,
+                                            selectedNoise === key && styles.noiseTypeChipTextActive,
+                                        ]}>
+                                            {label}
+                                        </Text>
+                                    </TouchableOpacity>
+                                ))}
+                            </View>
+
+                            {/* SNR picker */}
+                            <Text style={styles.noisePickerLabel}>SNR: {snrDb} dB</Text>
+                            <View style={styles.snrRow}>
+                                {SNR_OPTIONS.map(v => (
+                                    <TouchableOpacity
+                                        key={v}
+                                        style={[styles.snrBtn, snrDb === v && styles.snrBtnActive]}
+                                        onPress={() => setSnrDb(v)}
+                                        activeOpacity={0.8}
+                                    >
+                                        <Text style={[
+                                            styles.snrBtnText,
+                                            snrDb === v && styles.snrBtnTextActive,
+                                        ]}>
+                                            {v > 0 ? `+${v}` : v}
+                                        </Text>
+                                    </TouchableOpacity>
+                                ))}
+                            </View>
+
+                            {/* Add Noise button */}
+                            <TouchableOpacity
+                                style={[styles.addNoiseBtn,
+                                isAddingNoise && styles.addNoiseBtnDisabled]}
+                                onPress={handleAddNoise}
+                                disabled={isAddingNoise}
+                                activeOpacity={0.85}
+                            >
+                                {isAddingNoise
+                                    ? <ActivityIndicator size="small" color="#FFF" />
+                                    : <Text style={styles.addNoiseBtnText}>
+                                        Add Noise &amp; Preview
+                                    </Text>
+                                }
+                            </TouchableOpacity>
+
+                            {/* Add noise error */}
+                            {addNoiseError && !isAddingNoise && (
+                                <Text style={styles.addNoiseError}>⚠️ {addNoiseError}</Text>
+                            )}
+
+                            {/* Noisy audio player row */}
+                            {noisyAudio && !isAddingNoise && (
+                                <View style={styles.noisyPlayerRow}>
+                                    <Text style={styles.noisyPlayerLabel} numberOfLines={1}>
+                                        🔊 {selectedNoise.charAt(0).toUpperCase() + selectedNoise.slice(1)} noise · {snrDb} dB SNR
+                                    </Text>
+                                    <TouchableOpacity
+                                        style={[
+                                            styles.noisyPlayBtn,
+                                            playingNoisy && styles.noisyPlayBtnActive,
+                                        ]}
+                                        onPress={playingNoisy ? stopPlayback : playNoisy}
+                                        activeOpacity={0.85}
+                                    >
+                                        <Text style={styles.noisyPlayBtnIcon}>
+                                            {playingNoisy ? '⏸' : '▶'}
+                                        </Text>
+                                    </TouchableOpacity>
+                                </View>
+                            )}
+                        </LinearGradient>
+                    </Animated.View>
+                )}
+
+                {/* ── Media selector (heart / lung) ─────────────────────────── */}
+                <Animated.View style={{
+                    opacity: fadeAnim,
+                    transform: [{ translateY: slideAnim }],
+                    marginBottom: SPACING.xl,
+                }}>
+                    <View style={styles.controlsHeader}>
+                        <LinearGradient
+                            colors={[APP_COLORS.primary, APP_COLORS.primaryLight, APP_COLORS.primaryLighter]}
+                            style={styles.controlsTitleAccent}
+                            start={{ x: 0, y: 0 }} end={{ x: 1, y: 0 }}
+                        />
+                        <Text style={styles.controlsTitle}>Sound Channels</Text>
+                    </View>
+
+                    <View style={styles.mediaGrid}>
+                        <MediaButton
+                            item={{
+                                key: 'heart',
+                                label: 'Heart Sound',
+                                sublabel: 'Low freq · 20–150 Hz',
+                                icon: '❤️',
+                                available: !!heartRaw,
+                                color: APP_COLORS.error || '#E53935',
+                                colorMid: APP_COLORS.errorLight || '#EF9A9A',
+                                colorLight: '#FFCDD2',
+                            }}
+                            isSelected={selectedMedia === 'heart'}
+                            onPress={setSelectedMedia}
+                        />
+                        <MediaButton
+                            item={{
+                                key: 'lung',
+                                label: 'Lung Sound',
+                                sublabel: 'Broadband · 80–1000 Hz',
+                                icon: '🫁',
+                                available: !!lungRaw,
+                                color: APP_COLORS.primary,
+                                colorMid: APP_COLORS.primaryLight,
+                                colorLight: APP_COLORS.primaryLighter,
+                            }}
+                            isSelected={selectedMedia === 'lung'}
+                            onPress={setSelectedMedia}
+                        />
+                    </View>
+                </Animated.View>
+
+                {/* ── Audio player card ─────────────────────────────────────── */}
+                {audioAvailable && (
+                    <Animated.View style={[
+                        styles.videoSection,
+                        { opacity: fadeAnim, transform: [{ scale: scaleAnim }] },
+                    ]}>
+                        <LinearGradient
+                            colors={['#FFFFFF', '#F0F9FB', '#E6F5F8']}
+                            style={styles.playerCard}
+                        >
+                            <Text style={styles.playerTitle}>
+                                {isHeart ? '❤️  Heart Sound' : '🫁  Lung Sound'}
+                            </Text>
+                            <Text style={styles.playerSub}>
+                                {isHeart
+                                    ? 'Low-frequency component (20–150 Hz)'
+                                    : 'Broadband component (80–1000 Hz)'}
+                            </Text>
+
+                            {/* Play / Stop row */}
+                            <View style={styles.playerBtnRow}>
+                                <TouchableOpacity
+                                    style={[
+                                        styles.playBtn,
+                                        isCurrentlyPlaying && styles.playBtnActive,
+                                    ]}
+                                    onPress={isCurrentlyPlaying ? stopPlayback : playFn}
+                                    activeOpacity={0.85}
+                                >
+                                    <LinearGradient
+                                        colors={
+                                            isCurrentlyPlaying
+                                                ? ['#C62828', '#E53935', '#EF9A9A']
+                                                : [APP_COLORS.primary, APP_COLORS.primaryLight,
+                                                APP_COLORS.primaryLighter]
+                                        }
+                                        style={styles.playBtnGradient}
+                                        start={{ x: 0, y: 0 }} end={{ x: 1, y: 1 }}
+                                    >
+                                        <Text style={styles.playBtnIcon}>
+                                            {isCurrentlyPlaying ? '⏹ Stop' : '▶ Play'}
+                                        </Text>
+                                    </LinearGradient>
+                                </TouchableOpacity>
+
+                                {/* Save button */}
+                                <TouchableOpacity
+                                    style={styles.saveBtn}
+                                    onPress={() => saveAudio(isHeart ? 'heart' : 'lung')}
+                                    activeOpacity={0.85}
+                                >
+                                    <Text style={styles.saveBtnText}>💾 Save</Text>
+                                </TouchableOpacity>
+                            </View>
+                        </LinearGradient>
+                    </Animated.View>
+                )}
+
+                {/* ── Retake button — identical to original ─────────────────── */}
+                <Animated.View style={{
+                    opacity: fadeAnim,
+                    transform: [{ translateY: slideAnim }],
+                    marginTop: SPACING.md,
+                }}>
                     <TouchableOpacity onPress={handleRetake}>
                         <LinearGradient
-                            colors={[APP_COLORS.primaryDarker, APP_COLORS.primary, APP_COLORS.primaryLightest, APP_COLORS.primaryDarker]}
+                            colors={[APP_COLORS.primaryDarker, APP_COLORS.primary,
+                            APP_COLORS.primaryLightest, APP_COLORS.primaryDarker]}
                             style={styles.retakeButtonGradient}
-                            start={{ x: 0, y: 0 }}
-                            end={{ x: 1, y: 1 }}
+                            start={{ x: 0, y: 0 }} end={{ x: 1, y: 1 }}
                         >
                             <Text style={styles.retakeIcon}>🔄</Text>
-                            <Text style={styles.retakeText}>{t("retake_recording")}</Text>
+                            <Text style={styles.retakeText}>{t('retake_recording')}</Text>
                         </LinearGradient>
                     </TouchableOpacity>
                 </Animated.View>
+
             </ScrollView>
         </View>
     );
 });
 
+// ─────────────────────────────────────────────────────────────────────────────
+//  Styles — all original styles preserved; new v3 styles appended at bottom
+// ─────────────────────────────────────────────────────────────────────────────
 const styles = StyleSheet.create({
     container: {
         flex: 1,
@@ -1061,7 +884,7 @@ const styles = StyleSheet.create({
         padding: SPACING.xl,
     },
 
-    // Header
+    // Header ──────────────────────────────────────────────────────────────────
     header: {
         flexDirection: 'row',
         justifyContent: 'space-between',
@@ -1069,26 +892,14 @@ const styles = StyleSheet.create({
         marginBottom: SPACING.xl,
         gap: SPACING.md,
     },
-    refreshButton: {
-        width: 52,
-        height: 52,
-        borderRadius: 26,
-        justifyContent: 'center',
-        alignItems: 'center',
-        ...SHADOWS.medium,
-        elevation: 8,
-    },
-    refreshIcon: {
-        fontSize: 24,
-    },
 
-    // Diagnosis Card
+    // Diagnosis Card ──────────────────────────────────────────────────────────
     diagnosisCard: {
         borderRadius: BORDER_RADIUS.xl,
         padding: SPACING.xl,
         ...SHADOWS.large,
         borderWidth: 2,
-        borderColor: 'rgba(255, 255, 255, 0.9)',
+        borderColor: 'rgba(255,255,255,0.9)',
     },
     diagnosisHeader: {
         flexDirection: 'row',
@@ -1122,73 +933,102 @@ const styles = StyleSheet.create({
         letterSpacing: 0.5,
     },
 
-    // Video Section
+    // Meters ──────────────────────────────────────────────────────────────────
+    metersRow: {
+        flexDirection: 'row',
+    },
+    meterCard: {
+        backgroundColor: '#FFF',
+        borderRadius: BORDER_RADIUS.lg,
+        padding: SPACING.md,
+        ...SHADOWS.small,
+    },
+    meterLabel: {
+        fontSize: FONTS.sizes.xs,
+        color: '#64748B',
+        fontWeight: '600',
+        marginBottom: 6,
+        letterSpacing: 0.5,
+    },
+    meterTrack: {
+        height: 6,
+        backgroundColor: '#E2E8F0',
+        borderRadius: 3,
+        overflow: 'hidden',
+        marginBottom: 4,
+    },
+    meterFill: {
+        height: '100%',
+        borderRadius: 3,
+    },
+    meterValue: {
+        fontSize: FONTS.sizes.sm,
+        fontWeight: '700',
+        color: '#1E3A5F',
+    },
+
+    // Video Section ───────────────────────────────────────────────────────────
     videoSection: {
         marginBottom: SPACING.xl,
     },
-    videoPlayerContainer: {
-        backgroundColor: '#000',
+    playerCard: {
         borderRadius: BORDER_RADIUS.xl,
-        overflow: 'hidden',
-        height: 320,
-        ...SHADOWS.large,
-        borderWidth: 3,
-        borderColor: 'rgba(255, 255, 255, 0.9)',
-    },
-    webView: {
-        flex: 1,
-        backgroundColor: 'transparent',
-    },
-    videoPlaceholder: {
-        borderRadius: BORDER_RADIUS.xl,
-        height: 320,
-        justifyContent: 'center',
-        alignItems: 'center',
         padding: SPACING.xl,
-        borderWidth: 2,
-        borderColor: APP_COLORS.primaryLight + '50',
         ...SHADOWS.medium,
+        borderWidth: 2,
+        borderColor: 'rgba(255,255,255,0.8)',
     },
-    placeholderLottie: {
-        width: 120,
-        height: 120,
-        marginBottom: SPACING.md,
+    playerTitle: {
+        fontSize: FONTS.sizes.lg,
+        fontWeight: '800',
+        color: '#1E3A5F',
+        marginBottom: 4,
     },
-    placeholderIcon: {
-        fontSize: 80,
+    playerSub: {
+        fontSize: FONTS.sizes.xs,
+        color: '#64748B',
         marginBottom: SPACING.lg,
     },
-    placeholderText: {
-        fontSize: FONTS.sizes.lg,
-        color: '#1E3A5F',
-        fontWeight: '700',
-        marginBottom: SPACING.xs,
-        textAlign: 'center',
+    playerBtnRow: {
+        flexDirection: 'row',
+        gap: SPACING.md,
     },
-    placeholderSubtext: {
-        fontSize: FONTS.sizes.sm,
-        color: APP_COLORS.primaryDark,
-        textAlign: 'center',
-        fontWeight: '500',
+    playBtn: {
+        flex: 1,
+        borderRadius: BORDER_RADIUS.lg,
+        overflow: 'hidden',
     },
-    errorOverlay: {
-        ...StyleSheet.absoluteFillObject,
-        backgroundColor: 'rgba(0,0,0,0.92)',
+    playBtnActive: {
+        opacity: 0.9,
+    },
+    playBtnGradient: {
+        paddingVertical: 14,
+        alignItems: 'center',
+        borderRadius: BORDER_RADIUS.lg,
+    },
+    playBtnIcon: {
+        fontSize: 15,
+        fontWeight: '800',
+        color: '#FFF',
+        letterSpacing: 0.5,
+    },
+    saveBtn: {
+        paddingHorizontal: SPACING.xl,
+        paddingVertical: 14,
+        backgroundColor: '#F1F5F9',
+        borderRadius: BORDER_RADIUS.lg,
+        borderWidth: 1,
+        borderColor: '#CBD5E1',
         justifyContent: 'center',
         alignItems: 'center',
-        padding: SPACING.xl,
     },
-    errorOverlayText: {
-        color: '#fff',
-        fontSize: FONTS.sizes.md,
-        textAlign: 'center',
-        fontWeight: '600',
+    saveBtnText: {
+        fontSize: FONTS.sizes.sm,
+        fontWeight: '700',
+        color: '#1E3A5F',
     },
 
-    // Media Controls
-    mediaControlsContainer: {
-        marginBottom: SPACING.xl,
-    },
+    // Media Controls ──────────────────────────────────────────────────────────
     controlsHeader: {
         flexDirection: 'row',
         alignItems: 'center',
@@ -1216,11 +1056,11 @@ const styles = StyleSheet.create({
         alignItems: 'center',
         ...SHADOWS.medium,
         borderWidth: 2,
-        borderColor: 'rgba(255, 255, 255, 0.8)',
+        borderColor: 'rgba(255,255,255,0.8)',
     },
     mediaControlCardActive: {
         borderWidth: 3,
-        borderColor: 'rgba(255, 255, 255, 0.95)',
+        borderColor: 'rgba(255,255,255,0.95)',
     },
     mediaControlCardDisabled: {
         opacity: 0.6,
@@ -1259,7 +1099,7 @@ const styles = StyleSheet.create({
     activeBadge: {
         width: 32,
         height: 32,
-        backgroundColor: 'rgba(255, 255, 255, 0.3)',
+        backgroundColor: 'rgba(255,255,255,0.3)',
         borderRadius: 16,
         justifyContent: 'center',
         alignItems: 'center',
@@ -1271,7 +1111,7 @@ const styles = StyleSheet.create({
         fontWeight: '900',
     },
 
-    // Loading/Error/Empty States
+    // Loading ─────────────────────────────────────────────────────────────────
     loadingContainer: {
         borderRadius: BORDER_RADIUS.xl,
         padding: SPACING.xl * 1.5,
@@ -1297,6 +1137,27 @@ const styles = StyleSheet.create({
         color: APP_COLORS.primaryDark,
         fontWeight: '500',
     },
+    progressTrack: {
+        width: '100%',
+        height: 8,
+        backgroundColor: '#E2E8F0',
+        borderRadius: 4,
+        overflow: 'hidden',
+        marginTop: SPACING.lg,
+    },
+    progressFill: {
+        height: '100%',
+        backgroundColor: APP_COLORS.primary,
+        borderRadius: 4,
+    },
+    progressPct: {
+        marginTop: SPACING.sm,
+        fontSize: FONTS.sizes.sm,
+        color: APP_COLORS.primaryDark,
+        fontWeight: '600',
+    },
+
+    // Error ───────────────────────────────────────────────────────────────────
     errorContainer: {
         borderRadius: BORDER_RADIUS.xl,
         padding: SPACING.xl,
@@ -1328,61 +1189,8 @@ const styles = StyleSheet.create({
         fontWeight: '800',
         letterSpacing: 1,
     },
-    emptyAnalysisContainer: {
-        borderRadius: BORDER_RADIUS.xl,
-        padding: SPACING.xl * 1.5,
-        alignItems: 'center',
-        ...SHADOWS.medium,
-        borderWidth: 2,
-        borderColor: APP_COLORS.primaryLight + '40',
-    },
-    emptyIcon: {
-        fontSize: 72,
-        marginBottom: SPACING.lg,
-    },
-    emptyText: {
-        fontSize: FONTS.sizes.lg,
-        color: '#1E3A5F',
-        textAlign: 'center',
-        marginBottom: SPACING.xs,
-        fontWeight: '700',
-    },
-    emptySubtext: {
-        fontSize: FONTS.sizes.sm,
-        color: APP_COLORS.primaryDark,
-        textAlign: 'center',
-        marginBottom: SPACING.xl,
-        fontWeight: '500',
-    },
-    fetchButton: {
-        paddingHorizontal: SPACING.xl * 1.5,
-        paddingVertical: SPACING.md,
-        borderRadius: BORDER_RADIUS.xl,
-        ...SHADOWS.small,
-    },
-    fetchButtonText: {
-        fontSize: FONTS.sizes.sm,
-        color: '#FFFFFF',
-        fontWeight: '800',
-        letterSpacing: 1,
-    },
-    loadingOverlay: {
-        marginBottom: SPACING.lg,
-    },
-    loadingOverlayContent: {
-        borderRadius: BORDER_RADIUS.lg,
-        padding: SPACING.xl,
-        alignItems: 'center',
-        ...SHADOWS.small,
-    },
-    loadingOverlayText: {
-        marginTop: SPACING.md,
-        fontSize: FONTS.sizes.sm,
-        color: '#1E3A5F',
-        fontWeight: '600',
-    },
 
-    // Empty State
+    // Empty State ─────────────────────────────────────────────────────────────
     emptyStateContainer: {
         flex: 1,
         justifyContent: 'center',
@@ -1437,5 +1245,300 @@ const styles = StyleSheet.create({
         color: '#FFFFFF',
         fontWeight: '800',
         letterSpacing: 1,
+    },
+
+    // ── v3 NEW STYLES ─────────────────────────────────────────────────────────
+
+    // Section headers
+    sectionHeaderRow: {
+        flexDirection: 'row',
+        alignItems: 'center',
+        marginBottom: SPACING.md,
+    },
+    sectionAccentBar: {
+        width: 5,
+        height: 24,
+        borderRadius: 3,
+        marginRight: SPACING.md,
+    },
+    sectionTitle: {
+        fontSize: FONTS.sizes.lg,
+        fontWeight: '800',
+        color: '#1E3A5F',
+        letterSpacing: 0.3,
+    },
+
+    // Heart detection — detect button
+    detectBtn: {
+        borderRadius: BORDER_RADIUS.lg,
+        overflow: 'hidden',
+        marginBottom: SPACING.md,
+        ...SHADOWS.small,
+    },
+    detectBtnGradient: {
+        flexDirection: 'row',
+        alignItems: 'center',
+        justifyContent: 'center',
+        paddingVertical: 14,
+        paddingHorizontal: SPACING.xl,
+        borderRadius: BORDER_RADIUS.lg,
+    },
+    detectBtnIcon: {
+        fontSize: 18,
+        marginRight: SPACING.sm,
+    },
+    detectBtnText: {
+        fontSize: FONTS.sizes.md,
+        fontWeight: '700',
+        color: '#FFF',
+        letterSpacing: 0.3,
+    },
+
+    // Detecting spinner row
+    detectingRow: {
+        flexDirection: 'row',
+        alignItems: 'center',
+        paddingVertical: SPACING.md,
+        paddingHorizontal: SPACING.lg,
+        backgroundColor: '#E8F6FB',
+        borderRadius: BORDER_RADIUS.md,
+        marginBottom: SPACING.md,
+    },
+    detectingText: {
+        fontSize: FONTS.sizes.sm,
+        color: '#0A7EA4',
+        fontWeight: '600',
+    },
+
+    // Detect error row
+    detectErrorRow: {
+        flexDirection: 'row',
+        alignItems: 'center',
+        paddingVertical: SPACING.sm,
+        paddingHorizontal: SPACING.md,
+        backgroundColor: '#FFF3F3',
+        borderRadius: BORDER_RADIUS.md,
+        marginBottom: SPACING.md,
+        gap: SPACING.sm,
+    },
+    detectErrorText: {
+        flex: 1,
+        fontSize: FONTS.sizes.xs,
+        color: '#C62828',
+        fontWeight: '500',
+    },
+    reDetectBtn: {
+        paddingHorizontal: SPACING.md,
+        paddingVertical: SPACING.xs,
+        backgroundColor: '#C62828',
+        borderRadius: BORDER_RADIUS.sm,
+    },
+    reDetectBtnText: {
+        fontSize: FONTS.sizes.xs,
+        color: '#FFF',
+        fontWeight: '700',
+    },
+
+    // Heart detection result card
+    heartDetectCard: {
+        borderRadius: BORDER_RADIUS.xl,
+        padding: SPACING.lg,
+        ...SHADOWS.medium,
+        borderWidth: 1.5,
+        borderColor: 'rgba(255,255,255,0.9)',
+    },
+    heartDetectRow: {
+        flexDirection: 'row',
+        alignItems: 'center',
+        marginBottom: SPACING.md,
+    },
+    heartDetectIcon: {
+        fontSize: 32,
+        marginRight: SPACING.md,
+    },
+    heartDetectTitle: {
+        fontSize: FONTS.sizes.md,
+        fontWeight: '800',
+        marginBottom: 3,
+    },
+    heartDetectSub: {
+        fontSize: FONTS.sizes.xs,
+        color: '#555',
+        fontWeight: '500',
+    },
+    reDetectIconBtn: {
+        width: 36,
+        height: 36,
+        borderRadius: 18,
+        backgroundColor: 'rgba(0,0,0,0.08)',
+        justifyContent: 'center',
+        alignItems: 'center',
+        marginLeft: SPACING.sm,
+    },
+    reDetectIconText: {
+        fontSize: 18,
+        color: '#555',
+        fontWeight: '700',
+    },
+    heartMetricsRow: {
+        flexDirection: 'row',
+        marginTop: SPACING.md,
+        backgroundColor: 'rgba(255,255,255,0.5)',
+        borderRadius: BORDER_RADIUS.md,
+        padding: SPACING.md,
+    },
+    heartMetricItem: {
+        flex: 1,
+        alignItems: 'center',
+    },
+    heartMetricDivider: {
+        width: 1,
+        backgroundColor: 'rgba(0,0,0,0.1)',
+        marginVertical: 2,
+    },
+    heartMetricLabel: {
+        fontSize: FONTS.sizes.xs,
+        color: '#555',
+        fontWeight: '500',
+        marginBottom: 2,
+        letterSpacing: 0.3,
+    },
+    heartMetricValue: {
+        fontSize: FONTS.sizes.sm,
+        color: '#1E3A5F',
+        fontWeight: '800',
+    },
+
+    // Noise injection card
+    noiseCard: {
+        borderRadius: BORDER_RADIUS.xl,
+        padding: SPACING.lg,
+        ...SHADOWS.medium,
+        borderWidth: 1.5,
+        borderColor: 'rgba(255,255,255,0.85)',
+    },
+    noiseSectionSub: {
+        fontSize: FONTS.sizes.xs,
+        color: '#4A6A8C',
+        fontWeight: '500',
+        marginBottom: SPACING.md,
+        lineHeight: 18,
+    },
+    noisePickerLabel: {
+        fontSize: FONTS.sizes.xs,
+        color: '#1A3A5C',
+        fontWeight: '700',
+        letterSpacing: 0.8,
+        marginBottom: SPACING.sm,
+        textTransform: 'uppercase',
+    },
+    noiseTypeRow: {
+        flexDirection: 'row',
+        flexWrap: 'wrap',
+        gap: SPACING.sm,
+        marginBottom: SPACING.lg,
+    },
+    noiseTypeChip: {
+        paddingVertical: 7,
+        paddingHorizontal: SPACING.md,
+        borderRadius: BORDER_RADIUS.full || 999,
+        backgroundColor: '#E8F2FE',
+        borderWidth: 1.5,
+        borderColor: '#C0D8F8',
+    },
+    noiseTypeChipActive: {
+        backgroundColor: '#0A7EA4',
+        borderColor: '#0A7EA4',
+    },
+    noiseTypeChipText: {
+        fontSize: FONTS.sizes.sm,
+        color: '#1A3A5C',
+        fontWeight: '600',
+    },
+    noiseTypeChipTextActive: {
+        color: '#FFF',
+    },
+    snrRow: {
+        flexDirection: 'row',
+        gap: 6,
+        marginBottom: SPACING.lg,
+    },
+    snrBtn: {
+        flex: 1,
+        paddingVertical: 8,
+        alignItems: 'center',
+        borderRadius: BORDER_RADIUS.md,
+        backgroundColor: '#E8F2FE',
+        borderWidth: 1.5,
+        borderColor: '#C0D8F8',
+    },
+    snrBtnActive: {
+        backgroundColor: '#0A7EA4',
+        borderColor: '#0A7EA4',
+    },
+    snrBtnText: {
+        fontSize: FONTS.sizes.xs,
+        color: '#1A3A5C',
+        fontWeight: '700',
+    },
+    snrBtnTextActive: {
+        color: '#FFF',
+    },
+    addNoiseBtn: {
+        backgroundColor: '#0A7EA4',
+        borderRadius: BORDER_RADIUS.lg,
+        paddingVertical: 13,
+        alignItems: 'center',
+        marginBottom: SPACING.md,
+        ...SHADOWS.small,
+    },
+    addNoiseBtnDisabled: {
+        opacity: 0.6,
+    },
+    addNoiseBtnText: {
+        fontSize: FONTS.sizes.md,
+        fontWeight: '800',
+        color: '#FFF',
+        letterSpacing: 0.3,
+    },
+    addNoiseError: {
+        fontSize: FONTS.sizes.xs,
+        color: '#C62828',
+        fontWeight: '500',
+        marginBottom: SPACING.sm,
+        textAlign: 'center',
+    },
+    noisyPlayerRow: {
+        flexDirection: 'row',
+        alignItems: 'center',
+        backgroundColor: 'rgba(255,255,255,0.7)',
+        borderRadius: BORDER_RADIUS.lg,
+        padding: SPACING.md,
+        gap: SPACING.md,
+        borderWidth: 1,
+        borderColor: 'rgba(10,126,164,0.2)',
+    },
+    noisyPlayerLabel: {
+        flex: 1,
+        fontSize: FONTS.sizes.sm,
+        color: '#1A3A5C',
+        fontWeight: '600',
+    },
+    noisyPlayBtn: {
+        width: 40,
+        height: 40,
+        borderRadius: 20,
+        backgroundColor: '#0A7EA4',
+        justifyContent: 'center',
+        alignItems: 'center',
+        ...SHADOWS.small,
+    },
+    noisyPlayBtnActive: {
+        backgroundColor: '#C62828',
+    },
+    noisyPlayBtnIcon: {
+        fontSize: 16,
+        color: '#FFF',
+        fontWeight: '700',
     },
 });

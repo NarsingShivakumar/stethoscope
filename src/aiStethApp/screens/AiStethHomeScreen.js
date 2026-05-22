@@ -73,8 +73,8 @@ function AiStethHomeScreen() {
   const stethoscope = useStethoscope();
   const audioPlayer = useAudioPlayer();
   const hasResults = useSelector(selectHasResults);
-
-  const vitalsDataInfo = useSelector(state => state.vitals || {});
+  const EMPTY_VITALS = {};
+  const vitalsDataInfo = useSelector(state => state.vitals || EMPTY_VITALS);
   const initialScreen = vitalsDataInfo.aiStethScreen || 'device';
 
   const [currentScreen, setCurrentScreen] = useState(initialScreen);
