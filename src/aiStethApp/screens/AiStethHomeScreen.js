@@ -51,7 +51,7 @@ import { useStethoscope } from '../hooks/useStethoscope';
 import { useAudioPlayer } from '../hooks/useAudioPlayer';
 import { DeviceConnectionSection } from '../components/sections/DeviceConnectionSection';
 import { RecordingSection } from '../components/sections/RecordingSection';
-import { AnalysisSection } from '../components/sections/AnalysisSection';
+// import  AnalrysisSection  from '../components/sections/AnalysisSection';
 import { PreviousRecordingsScreen } from './PreviousRecordingsScreen';
 
 import { COLORS, SPACING, FONTS } from '../constants/theme';
@@ -62,6 +62,8 @@ import {
 } from '../../store/slices/SeparationSlice';
 import { APP_CONFIG, debugLog, debugError } from '../../config/AppConfig';
 import { t } from 'i18next';
+import AnalysisSection from '../components/sections/AnalysisSection';
+// import AnalysisSection from '../components/sections/AnalysisSection';
 
 function AiStethHomeScreen() {
   const dispatch = useDispatch();

@@ -36,6 +36,7 @@ import {
     processBase64Thunk,
     selectIsProcessing,
     clearSeparationData,
+    analyzeAudioThunk,
 } from '../../store/slices/SeparationSlice';
 import { debugLog, debugError } from '../../config/AppConfig';
 
@@ -357,6 +358,7 @@ export const PreviousRecordingsScreen = ({
 
                             debugLog('[PrevRec] Reading uploaded file:', uploadedFile.copyPath);
                             const base64Audio = await RNFS.readFile(uploadedFile.copyPath, 'base64');
+                            const actionad = await dispatch(analyzeAudioThunk({ fileUri: uploadedFile.copyPath }));
 
                             const action = await dispatch(processBase64Thunk({
                                 base64Audio,

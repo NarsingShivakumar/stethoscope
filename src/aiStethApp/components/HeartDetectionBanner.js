@@ -62,7 +62,7 @@ const sb = StyleSheet.create({
 });
 
 // ── Main banner ───────────────────────────────────────────────────────────────
-export const HeartDetectionBanner = memo(({ heartBase64, sampleRate = 44100 }) => {
+export const HeartDetectionBanner = memo(({ heartBase64, sampleRate = 4000 }) => {
     const dispatch        = useDispatch();
     const isDetecting     = useSelector(selectIsDetectingHeart);
     const heartDetected   = useSelector(selectHeartDetected);

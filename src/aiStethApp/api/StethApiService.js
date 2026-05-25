@@ -1,32 +1,13 @@
-// src/aiStethApp/api/StethApiService.js
-//
-// COMPLETE REPLACEMENT for AiStethApiService.js
-//
-// REMOVED: AISTETH_CREDENTIALS (tenantId, keySecret, keyId)
-//          developer.aisteth.com URLs
-//          createPatient, getPatientList, uploadAudioFile
-//          createPHR, getPHRList, getAIAnalysis
-//          getVisualizationUrl, getAudioUrl
-//
-// ADDED:   processAudio(base64Audio, sampleRate)
-//          healthCheck()
-//
-// The old named exports are kept as rejected-promise stubs so any
-// remaining import sites fail loudly rather than silently.
-// NEW in v3:
-//   addNoise(base64Audio, sampleRate, noiseType, snrDb)
-//   detectHeart(base64Audio, sampleRate)
-//
-// Everything else (processAudio, healthCheck, stubs) preserved exactly.
+// src/aiStethApp/api/StethApiService.js v3.1
+// FIX: detectHeart sampleRate default changed 44100 → 4000
+//      (NMF separation output is always at TARGET_SR=4000 Hz)
 
 import axios from 'axios';
-// import { APP_CONFIG } from '../../config/AppConfig';
 import { APP_CONFIG, debugLog, debugError } from '../../config/AppConfig';
 
-// ── Axios instance pointing at our Flask backend ───────────────────────────────
 const api = axios.create({
   baseURL: APP_CONFIG.STETH_SERVER_URL,
-  timeout: 90_000,  // 90 s covers NMF on slow hardware + large uploads
+  timeout: 90_000,
   headers: { 'Content-Type': 'application/json' },
 });
 
@@ -57,48 +38,22 @@ const toApiError = err => {
     message: 'No response',
     userMessage: 'Cannot reach the separation server. Check your network or server IP in AppConfig.js.',
   };
-  return {
-    code: 'UNKNOWN_ERROR', message: err.message,
-    userMessage: 'Something went wrong — please try again.'
-  };
+  return { code: 'UNKNOWN_ERROR', message: err.message, userMessage: 'Something went wrong — please try again.' };
 };
 
-// ══════════════════════════════════════════════════════════════════════════════
-//  Public API
-// ══════════════════════════════════════════════════════════════════════════════
-
-/**
- * Send audio to the Flask NMF separation backend.
- *
- * @param {string} base64Audio   Base64-encoded PCM-16 mono (WAV preferred)
- * @param {number} sampleRate    Original SR in Hz (default 44100)
- * @returns {Promise<{
- *   heart: string, lung: string,
- *   noiseLevel: number, signalQuality: number,
- *   processingMs: number, status: string
- * }>}
- */
 export const processAudio = async (base64Audio, sampleRate = 44100) => {
   try {
-    debugLog('[StethAPI] processAudio  sr=', sampleRate, 'payloadLen=', base64Audio.length);
-    const res = await api.post('/process_audio', {
-      audio: base64Audio,
-      sample_rate: sampleRate,
-    });
+    debugLog('[StethAPI] processAudio sr=', sampleRate, 'payloadLen=', base64Audio.length);
+    const res = await api.post('/process_audio', { audio: base64Audio, sample_rate: sampleRate });
     const { heart, lung, noise_level, signal_quality, processing_ms, status } = res.data;
     if (status !== 'success') throw new Error(res.data.error || 'Unknown separation error');
-    debugLog('[StethAPI] OK  quality=', signal_quality, 'noise=', noise_level, 'ms=', processing_ms);
-    return {
-      heart, lung, noiseLevel: noise_level, signalQuality: signal_quality,
-      processingMs: processing_ms, status
-    };
+    return { heart, lung, noiseLevel: noise_level, signalQuality: signal_quality, processingMs: processing_ms, status };
   } catch (err) {
     debugError('[StethAPI] processAudio error:', err);
     throw toApiError(err);
   }
 };
 
-/** Quick liveness check — call before sending audio. */
 export const healthCheck = async () => {
   try {
     const res = await api.get('/health', { timeout: 5000 });
@@ -106,34 +61,14 @@ export const healthCheck = async () => {
   } catch { return false; }
 };
 
-// ── NEW: addNoise ─────────────────────────────────────────────────────────────
-/**
- * Inject noise into audio at a given SNR.
- *
- * @param {string} base64Audio   Base64-encoded PCM-16 mono WAV
- * @param {number} sampleRate    Original SR in Hz (default 44100)
- * @param {string} noiseType     "voice" | "white" | "pink" | "brown"
- * @param {number} snrDb         Signal-to-noise ratio in dB (default 10)
- * @returns {Promise<{ audio: string, noiseType: string, snrDb: number,
- *                     originalRms: number, status: string }>}
- */
-export const addNoise = async (
-  base64Audio,
-  sampleRate = 44100,
-  noiseType = 'white',
-  snrDb = 10,
-) => {
+export const addNoise = async (base64Audio, sampleRate = 44100, noiseType = 'white', snrDb = 10) => {
   try {
-    debugLog('[StethAPI] addNoise  type=', noiseType, 'snr=', snrDb, 'sr=', sampleRate);
+    debugLog('[StethAPI] addNoise type=', noiseType, 'snr=', snrDb, 'sr=', sampleRate);
     const res = await api.post('/add_noise', {
-      audio: base64Audio,
-      sample_rate: sampleRate,
-      noise_type: noiseType,
-      snr_db: snrDb,
+      audio: base64Audio, sample_rate: sampleRate, noise_type: noiseType, snr_db: snrDb,
     });
     const { audio, noise_type, snr_db, original_rms, status } = res.data;
     if (status !== 'success') throw new Error(res.data.error || 'Noise injection failed');
-    debugLog('[StethAPI] addNoise OK  originalRms=', original_rms);
     return { audio, noiseType: noise_type, snrDb: snr_db, originalRms: original_rms, status };
   } catch (err) {
     debugError('[StethAPI] addNoise error:', err);
@@ -141,32 +76,19 @@ export const addNoise = async (
   }
 };
 
-// ── NEW: detectHeart ──────────────────────────────────────────────────────────
 /**
- * Detect whether heart sound is present in audio.
- *
- * @param {string} base64Audio   Base64-encoded PCM-16 mono WAV
- * @param {number} sampleRate    Original SR in Hz (default 44100)
- * @returns {Promise<{
- *   heartDetected: boolean,
- *   confidence:    number,   // 0-1
- *   energyRatio:   number,   // fraction of energy in 20-150 Hz band
- *   periodicity:   number,   // autocorrelation peak strength
- *   dominantBpm:   number | null,
- *   status:        string,
- * }>}
+ * FIX v3.1: sampleRate default changed to 4000 Hz.
+ * The NMF separation always outputs heart audio at TARGET_SR=4000 Hz.
+ * Sending 44100 causes the backend to interpret 20–150 Hz band at the
+ * wrong frequency range (11x shift), making heart detection unreliable.
  */
-export const detectHeart = async (base64Audio, sampleRate = 44100) => {
+export const detectHeart = async (base64Audio, sampleRate = 4000) => {
   try {
-    debugLog('[StethAPI] detectHeart  sr=', sampleRate, 'payloadLen=', base64Audio.length);
-    const res = await api.post('/detect_heart', {
-      audio: base64Audio,
-      sample_rate: sampleRate,
-    });
+    debugLog('[StethAPI] detectHeart sr=', sampleRate, 'payloadLen=', base64Audio.length);
+    const res = await api.post('/detect_heart', { audio: base64Audio, sample_rate: sampleRate });
     const d = res.data;
     if (d.status !== 'success') throw new Error(d.error || 'Heart detection failed');
-    debugLog('[StethAPI] detectHeart OK  detected=', d.heart_detected,
-      'conf=', d.confidence, 'murmur=', d.murmur_type);
+    debugLog('[StethAPI] detectHeart OK detected=', d.heart_detected, 'conf=', d.confidence, 'murmur=', d.murmur_type);
     return {
       // Core
       heartDetected: d.heart_detected,
@@ -174,18 +96,18 @@ export const detectHeart = async (base64Audio, sampleRate = 44100) => {
       dominant_bpm: d.dominant_bpm,
       // Feature scores
       spectral_score: d.spectral_score,
-      hf_score: d.hf_score,
+      hf_score: d.hf_score,        // ← now returned by backend
       transient_score: d.transient_score,
       duty_score: d.duty_score,
       // Diagnostics
       centroid_hz: d.centroid_hz,
       hf_ratio: d.hf_ratio,
       n_transients: d.n_transients,
-      active_fraction: d.active_fraction,
-      rejection_reason: d.rejection_reason,
+      active_fraction: d.active_fraction, // ← now returned by backend
+      rejection_reason: d.rejection_reason,// ← now returned by backend
       // v1 compat
-      energyRatio: d.energy_ratio,
-      periodicity: d.periodicity,
+      energy_ratio: d.energy_ratio ?? null,
+      periodicity: d.periodicity ?? null,
       // Murmur
       murmur_detected: d.murmur_detected,
       murmur_type: d.murmur_type,
@@ -197,13 +119,29 @@ export const detectHeart = async (base64Audio, sampleRate = 44100) => {
     throw toApiError(err);
   }
 };
+export const analyzeAudioFile = async (fileUri) => {
+  const formData = new FormData();
+  formData.append('audio', {
+    uri: fileUri,
+    name: 'audio.wav',
+    type: 'audio/wav',
+  });
 
-// ── Stubs for old AiSteth exports so existing import sites don't crash ────────
-// Remove each stub once you've cleaned up the call site.
+  try {
+    const res = await api.post('/analyze-audio', formData, {
+      headers: { 'Content-Type': 'multipart/form-data' },
+      timeout: 180000,
+    });
+    return res.data;
+  } catch (err) {
+    throw toApiError(err);
+  }
+};
+
+// ── Stubs for removed AiSteth exports ─────────────────────────────────────────
 const _removed = name => () => Promise.reject(
   new Error(`[AiSteth REMOVED] ${name}() — AiSteth API has been replaced.`)
 );
-
 export const createPatient = _removed('createPatient');
 export const getPatientList = _removed('getPatientList');
 export const uploadAudioFile = _removed('uploadAudioFile');
@@ -213,14 +151,10 @@ export const getAIAnalysis = _removed('getAIAnalysis');
 export const getVisualizationUrl = _removed('getVisualizationUrl');
 export const getAudioUrl = _removed('getAudioUrl');
 
-// generateFileNumber / getCurrentConfig were harmless utility fns — kept as no-ops
 export const generateFileNumber = (length = 6) => {
   const chars = 'ABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789';
   return Array.from({ length }, () => chars[Math.floor(Math.random() * chars.length)]).join('');
 };
-export const getCurrentConfig = () => ({
-  server: APP_CONFIG.STETH_SERVER_URL,
-  backend: 'local-nmf',
-});
+export const getCurrentConfig = () => ({ server: APP_CONFIG.STETH_SERVER_URL, backend: 'local-nmf' });
 
 export default { processAudio, healthCheck, generateFileNumber, getCurrentConfig, addNoise, detectHeart };

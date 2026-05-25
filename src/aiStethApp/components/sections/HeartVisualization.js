@@ -531,7 +531,7 @@ const mb = StyleSheet.create({
 //  Main component
 // ─────────────────────────────────────────────────────────────────────────────
 
-const HeartVisualization = memo(({ heartBase64, sampleRate = 44100 }) => {
+const HeartVisualization = memo(({ heartBase64, sampleRate = 4000 }) => {
   const dispatch = useDispatch();
 
   // Redux state

@@ -291,7 +291,7 @@ export const AnalysisSection = memo(({ onRetake }) => {
     // ── v3: Heart detection ───────────────────────────────────────────────────
     const handleDetectHeart = useCallback(() => {
         if (!heartRaw) return;
-        dispatch(detectHeartThunk({ base64Audio: heartRaw, sampleRate: 44100 }));
+        dispatch(detectHeartThunk({ base64Audio: heartRaw, sampleRate: 4000 }));
     }, [heartRaw, dispatch]);
 
     // ── v3: Noise injection ───────────────────────────────────────────────────
