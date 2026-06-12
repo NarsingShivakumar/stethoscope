@@ -132,6 +132,7 @@ export const analyzeAudioFile = async (fileUri) => {
       headers: { 'Content-Type': 'multipart/form-data' },
       timeout: 180000,
     });
+    console.log("StethAPI:::", res)
     return res.data;
   } catch (err) {
     throw toApiError(err);

@@ -39,6 +39,7 @@ import {
     analyzeAudioThunk,
 } from '../../store/slices/SeparationSlice';
 import { debugLog, debugError } from '../../config/AppConfig';
+import { setAiStethScreen } from '../../store/slices/VitalSlice';
 
 const { StethoscopeRecorder } = NativeModules;
 
@@ -221,10 +222,10 @@ export const PreviousRecordingsScreen = ({
     }, [currentFile, isPlaying, playSound, pauseSound]);
 
     // ── Analyse list recording ────────────────────────────────────────────────
-    const handleAnalyse = useCallback(item => {
+    const handleAnalyse = useCallback((item) => {
         Alert.alert(
-            'Analyse with NMF Backend',
-            `Send "${item.fileName}" for heart/lung separation?\n\nUses the egrooby NMF algorithm (~1–2 sec).`,
+            'Analyse with Clinical Pipeline',
+            `Send ${item.fileName} for heart/lung separation and murmur analysis?`,
             [
                 { text: 'Cancel', style: 'cancel' },
                 {
@@ -233,31 +234,32 @@ export const PreviousRecordingsScreen = ({
                         try {
                             setAnalysingFile(item.filePath);
                             dispatch(clearSeparationData());
-                            debugLog('[PrevRec] Reading file:', item.filePath);
-                            const base64Audio = await RNFS.readFile(item.filePath, 'base64');
-                            const action = await dispatch(processBase64Thunk({
-                                base64Audio,
-                                sampleRate: 44100,
-                                filePath: item.filePath,
-                            }));
-                            if (processBase64Thunk.fulfilled.match(action)) {
+
+                            const action = await dispatch(
+                                analyzeAudioThunk({ fileUri: item.filePath })
+                            );
+
+                            if (analyzeAudioThunk.fulfilled.match(action)) {
+                                dispatch(setAiStethScreen('analysis'));
+                                debugLog('PrevRec', 'Upload analysis OK → analysis screen');
                                 handleShowAnalysis();
                             } else {
-                                Alert.alert('Analysis Failed',
-                                    action.payload || 'Separation server returned an error.');
+                                Alert.alert(
+                                    'Analysis Failed',
+                                    action.payload || 'Clinical analysis server returned an error.'
+                                );
                             }
                         } catch (err) {
-                            debugError('[PrevRec] analyse error:', err);
+                            debugError('PrevRec', 'analyse error', err);
                             Alert.alert('Error', err.message || 'Failed to analyse recording');
                         } finally {
                             setAnalysingFile(null);
                         }
                     },
                 },
-            ]
+            ],
         );
     }, [dispatch, handleShowAnalysis]);
-
     // ── Delete ────────────────────────────────────────────────────────────────
     const handleDelete = useCallback(async item => {
         Alert.alert(
@@ -344,9 +346,10 @@ export const PreviousRecordingsScreen = ({
     // ── Analyse the uploaded file ─────────────────────────────────────────────
     const handleAnalyseUpload = useCallback(async () => {
         if (!uploadedFile?.copyPath) return;
+
         Alert.alert(
             'Analyse Uploaded File',
-            `Send "${uploadedFile.name}" for heart/lung separation?\n\nUses the egrooby NMF algorithm (~1–2 sec).`,
+            `Send ${uploadedFile.name} for heart/lung separation and clinical analysis?`,
             [
                 { text: 'Cancel', style: 'cancel' },
                 {
@@ -356,32 +359,30 @@ export const PreviousRecordingsScreen = ({
                             setIsAnalysingUpload(true);
                             dispatch(clearSeparationData());
 
-                            debugLog('[PrevRec] Reading uploaded file:', uploadedFile.copyPath);
-                            const base64Audio = await RNFS.readFile(uploadedFile.copyPath, 'base64');
-                            const actionad = await dispatch(analyzeAudioThunk({ fileUri: uploadedFile.copyPath }));
+                            debugLog('PrevRec', 'Analysing uploaded file:', uploadedFile.copyPath);
 
-                            const action = await dispatch(processBase64Thunk({
-                                base64Audio,
-                                sampleRate: 44100,
-                                filePath: uploadedFile.copyPath,
-                            }));
+                            const action = await dispatch(
+                                analyzeAudioThunk({ fileUri: uploadedFile.copyPath })
+                            );
 
-                            if (processBase64Thunk.fulfilled.match(action)) {
-                                debugLog('[PrevRec] Upload analysis OK → analysis screen');
+                            if (analyzeAudioThunk.fulfilled.match(action)) {
+                                debugLog('PrevRec', 'Upload analysis OK → analysis screen');
                                 handleShowAnalysis();
                             } else {
-                                Alert.alert('Analysis Failed',
-                                    action.payload || 'Separation server returned an error.');
+                                Alert.alert(
+                                    'Analysis Failed',
+                                    action.payload || 'Clinical analysis server returned an error.'
+                                );
                             }
                         } catch (err) {
-                            debugError('[PrevRec] upload analyse error:', err);
+                            debugError('PrevRec', 'upload analyse error', err);
                             Alert.alert('Error', err.message || 'Failed to analyse uploaded file');
                         } finally {
                             setIsAnalysingUpload(false);
                         }
                     },
                 },
-            ]
+            ],
         );
     }, [uploadedFile, dispatch, handleShowAnalysis]);
 

@@ -1,5 +1,3 @@
-// src/store/slices/SeparationSlice.js v5
-
 import { createSlice, createAsyncThunk } from '@reduxjs/toolkit';
 import { NativeModules } from 'react-native';
 import {
@@ -11,6 +9,54 @@ import {
 import { debugLog, debugError } from '../../config/AppConfig';
 
 const { StethoscopeRecorder } = NativeModules;
+
+const normalizeOutputs = p => {
+  const outputs = p.audio_outputs ?? p.outputs ?? null;
+  const originalAudio =
+    outputs?.original ??
+    null;
+
+  const cleanedAudio =
+    p.cleaned ??
+    p.cleaned_audio_base64 ??
+    p.cleanedAudioBase64 ??
+    outputs?.cleaned ??
+    outputs?.cleaned_audio ??
+    outputs?.cleanedAudioBase64 ??
+    null;
+
+  const heartAudio =
+    p.heart ??
+    p.heart_audio_base64 ??
+    p.heartAudioBase64 ??
+    outputs?.heart ??
+    outputs?.heart_audio ??
+    outputs?.heartAudioBase64 ??
+    null;
+
+  const lungAudio =
+    p.lung ??
+    p.lung_audio_base64 ??
+    p.lungAudioBase64 ??
+    outputs?.lung ??
+    outputs?.lungs ??
+    outputs?.lung_audio ??
+    outputs?.lungAudioBase64 ??
+    null;
+
+  return { outputs, originalAudio, cleanedAudio, heartAudio, lungAudio };
+};
+
+const applySeparatedAudio = (s, p) => {
+  const { outputs, originalAudio, cleanedAudio, heartAudio, lungAudio } = normalizeOutputs(p);
+  s.originalAudio = originalAudio;
+  s.cleanedAudio = cleanedAudio;
+  s.heart = heartAudio;
+  s.lung = lungAudio;
+  s.heartWav = heartAudio;
+  s.lungWav = lungAudio;
+  s.audioOutputs = outputs;
+};
 
 export const processRecordingThunk = createAsyncThunk(
   'separation/processRecording',
@@ -114,6 +160,8 @@ export const analyzeAudioThunk = createAsyncThunk(
 const initial = {
   isProcessing: false,
   progress: { message: '', percent: 0 },
+  originalAudio: null,
+  cleanedAudio: null,
   heart: null,
   lung: null,
   heartWav: null,
@@ -123,37 +171,30 @@ const initial = {
   processingMs: null,
   error: null,
   lastFilePath: null,
-
   isDetectingHeart: false,
   heartDetected: null,
   heartConfidence: null,
   heartBpm: null,
   heartDetectError: null,
   heartRejectionReason: null,
-
   heartSpectralScore: null,
   heartHfScore: null,
   heartTransientScore: null,
   heartDutyScore: null,
-
   heartCentroidHz: null,
   heartHfRatio: null,
   heartNTransients: null,
   heartActiveFraction: null,
-
   heartEnergyRatio: null,
   heartPeriodicity: null,
-
   murmurDetected: null,
   murmurType: null,
   murmurConfidence: null,
-
   isAddingNoise: false,
   noisyAudio: null,
   noiseType: null,
   snrDb: null,
   addNoiseError: null,
-
   inputLengthMs: null,
   cardiacCycles: [],
   extraSounds: [],
@@ -167,17 +208,18 @@ const initial = {
 const _pending = s => {
   s.isProcessing = true;
   s.error = null;
+  s.originalAudio = null;
+  s.cleanedAudio = null;
   s.heart = null;
   s.lung = null;
+  s.heartWav = null;
+  s.lungWav = null;
   s.progress = { message: 'Processing…', percent: 10 };
 };
 
 const _fulfilled = (s, { payload: p }) => {
   s.isProcessing = false;
-  s.heart = p.heart;
-  s.lung = p.lung;
-  s.heartWav = p.heartWav;
-  s.lungWav = p.lungWav;
+  applySeparatedAudio(s, p);
   s.noiseLevel = p.noiseLevel;
   s.signalQuality = p.signalQuality;
   s.processingMs = p.processingMs;
@@ -233,6 +275,8 @@ const separationSlice = createSlice({
       s.audioOutputs = null;
       s.timeline = [];
       s.lungAnalysis = null;
+      s.originalAudio = null;
+      s.cleanedAudio = null;
     },
   },
   extraReducers: b => {
@@ -285,26 +329,33 @@ const separationSlice = createSlice({
         s.isAddingNoise = false;
         s.addNoiseError = payload || 'Noise injection failed';
       })
+      .addCase(analyzeAudioThunk.pending, s => {
+        s.isProcessing = true;
+        s.error = null;
+        s.progress = { message: 'Analysing…', percent: 20 };
+      })
       .addCase(analyzeAudioThunk.fulfilled, (s, { payload: p }) => {
         s.isProcessing = false;
+        s.error = null;
+
+        applySeparatedAudio(s, p);
+
         s.inputLengthMs = p.duration_ms ?? p.input_length_ms ?? null;
         s.cardiacCycles = p.cardiac_cycles ?? [];
         s.extraSounds = p.extra_sounds ?? [];
         s.murmurs = p.murmurs ?? [];
         s.noiseSegments = p.noise_segments ?? [];
-        s.audioOutputs = p.audio_outputs ?? p.outputs ?? null;
         s.timeline = p.timeline ?? [];
         s.lungAnalysis = p.lung_analysis ?? null;
         s.signalQuality = p.signal_quality ?? s.signalQuality;
         s.noiseLevel = p.noise_level ?? s.noiseLevel;
-      })
-      .addCase(analyzeAudioThunk.pending, s => {
-        s.isProcessing = true;
-        s.error = null;
+        s.processingMs = p.processing_ms ?? s.processingMs;
+        s.progress = { message: 'Done', percent: 100 };
       })
       .addCase(analyzeAudioThunk.rejected, (s, { payload }) => {
         s.isProcessing = false;
         s.error = payload || 'Analysis failed';
+        s.progress = { message: '', percent: 0 };
       });
   },
 });
@@ -320,6 +371,8 @@ export const {
 
 export const selectIsProcessing = s => s.separation.isProcessing;
 export const selectProgress = s => s.separation.progress;
+export const selectOriginalAudio = s => s.separation.originalAudio;
+export const selectCleanedAudio = s => s.separation.cleanedAudio;
 export const selectHeart = s => s.separation.heart;
 export const selectLung = s => s.separation.lung;
 export const selectHeartWav = s => s.separation.heartWav;
@@ -330,7 +383,6 @@ export const selectProcessingMs = s => s.separation.processingMs;
 export const selectSepError = s => s.separation.error;
 export const selectHasResults = s => !!(s.separation.heart && s.separation.lung);
 export const selectLastFilePath = s => s.separation.lastFilePath;
-
 export const selectInputLengthMs = s => s.separation.inputLengthMs;
 export const selectCardiacCycles = s => s.separation.cardiacCycles;
 export const selectExtraSounds = s => s.separation.extraSounds;
@@ -339,7 +391,6 @@ export const selectNoiseSegments = s => s.separation.noiseSegments;
 export const selectAudioOutputs = s => s.separation.audioOutputs;
 export const selectTimeline = s => s.separation.timeline;
 export const selectLungAnalysis = s => s.separation.lungAnalysis;
-
 export const selectIsDetectingHeart = s => s.separation.isDetectingHeart;
 export const selectHeartDetected = s => s.separation.heartDetected;
 export const selectHeartConfidence = s => s.separation.heartConfidence;
@@ -356,11 +407,9 @@ export const selectHeartNTransients = s => s.separation.heartNTransients;
 export const selectHeartActiveFraction = s => s.separation.heartActiveFraction;
 export const selectHeartEnergyRatio = s => s.separation.heartEnergyRatio;
 export const selectHeartPeriodicity = s => s.separation.heartPeriodicity;
-
 export const selectMurmurDetected = s => s.separation.murmurDetected;
 export const selectMurmurType = s => s.separation.murmurType;
 export const selectMurmurConfidence = s => s.separation.murmurConfidence;
-
 export const selectIsAddingNoise = s => s.separation.isAddingNoise;
 export const selectNoisyAudio = s => s.separation.noisyAudio;
 export const selectNoiseType = s => s.separation.noiseType;

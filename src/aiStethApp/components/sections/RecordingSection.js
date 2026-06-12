@@ -54,6 +54,7 @@ import {
     selectIsProcessing as selectSepProcessing,
     selectSepError,
     clearSeparationData,
+    analyzeAudioThunk,
 } from '../../../store/slices/SeparationSlice';
 // ── un-commented from original ────────────────────────────────────────────────
 import { setAiStethRecording } from '../../../store/slices/VitalSlice';
@@ -64,12 +65,12 @@ import { appliteColor } from '../../../assets/colors';
 import { t } from 'i18next';
 
 const STOP_ENABLE_AFTER_MS = 20 * 1000;
-const MAX_RECORDING_SEC    = 40;
+const MAX_RECORDING_SEC = 40;
 
 // ── StethPoint (identical to original) ───────────────────────────────────────
 const StethPoint = memo(({ pt, isActive, pointStyle }) => {
     const pulseAnim = useRef(new Animated.Value(isActive ? 1.18 : 1)).current;
-    const loopRef   = useRef(null);
+    const loopRef = useRef(null);
 
     useEffect(() => {
         if (isActive) {
@@ -108,23 +109,23 @@ export const RecordingSection = memo(
 
         // ── REPLACED: completeUploadLoading / Error → SeparationSlice ────────
         const completeUploadLoading = useSelector(selectSepProcessing);
-        const completeUploadError   = useSelector(selectSepError);
+        const completeUploadError = useSelector(selectSepError);
 
         const [recordingDuration, setRecordingDuration] = useState(0);
-        const [isStopEnabled,     setIsStopEnabled]     = useState(false);
-        const [stopCountdownSec,  setStopCountdownSec]  = useState(0);
+        const [isStopEnabled, setIsStopEnabled] = useState(false);
+        const [stopCountdownSec, setStopCountdownSec] = useState(0);
 
-        const durationIntervalRef   = useRef(null);
-        const stopUnlockAtRef       = useRef(null);
+        const durationIntervalRef = useRef(null);
+        const stopUnlockAtRef = useRef(null);
         const stopUnlockIntervalRef = useRef(null);
 
-        const fadeAnim    = useRef(new Animated.Value(0)).current;
-        const scaleAnim   = useRef(new Animated.Value(0.9)).current;
+        const fadeAnim = useRef(new Animated.Value(0)).current;
+        const scaleAnim = useRef(new Animated.Value(0.9)).current;
         const buttonPulse = useRef(new Animated.Value(1)).current;
 
         useEffect(() => {
             Animated.parallel([
-                Animated.timing(fadeAnim,  { toValue: 1, duration: 600, useNativeDriver: true }),
+                Animated.timing(fadeAnim, { toValue: 1, duration: 600, useNativeDriver: true }),
                 Animated.spring(scaleAnim, { toValue: 1, tension: 50, friction: 7, useNativeDriver: true }),
             ]).start();
         }, []);
@@ -133,7 +134,7 @@ export const RecordingSection = memo(
             if (isRecording) {
                 Animated.loop(Animated.sequence([
                     Animated.timing(buttonPulse, { toValue: 1.05, duration: 1000, useNativeDriver: true }),
-                    Animated.timing(buttonPulse, { toValue: 1,    duration: 1000, useNativeDriver: true }),
+                    Animated.timing(buttonPulse, { toValue: 1, duration: 1000, useNativeDriver: true }),
                 ])).start();
             } else { buttonPulse.setValue(1); }
         }, [isRecording]);
@@ -182,7 +183,7 @@ export const RecordingSection = memo(
                 debugLog('[RecordingSection] Auto-stop at max duration');
                 handleStopRecording();
             }
-        // eslint-disable-next-line react-hooks/exhaustive-deps
+            // eslint-disable-next-line react-hooks/exhaustive-deps
         }, [recordingDuration, isRecording]);
 
         const formatDuration = useCallback(s => {
@@ -234,23 +235,26 @@ export const RecordingSection = memo(
                 }
 
                 const filePath = result.filePath;
-                debugLog('[RecordingSection] dispatching processRecordingThunk →', filePath);
+                debugLog('[RecordingSection] dispatching analyzeAudioThunk →', filePath);
+                const fileUri = filePath.startsWith('file://') ? filePath : `file://${filePath}`;
 
                 // ── REPLACES uploadRecordingComplete / handleUploadToAiSteth ─
                 const action = await dispatch(
-                    processRecordingThunk({ filePath })
+                    analyzeAudioThunk({ fileUri })
                 );
 
-                if (processRecordingThunk.fulfilled.match(action)) {
-                    debugLog('[RecordingSection] Separation success → analysis screen');
+                if (analyzeAudioThunk.fulfilled.match(action)) {
+                    debugLog('[RecordingSection] Clinical analysis success → analysis screen');
                     dispatch(setAiStethRecording(false));
                     onShowAnalysis?.();
                     await disconnect?.();
                 } else {
-                    const msg = action.payload || 'Separation failed';
-                    debugError('[RecordingSection] Separation error:', msg);
-                    Alert.alert('Processing Failed',
-                        msg || 'Failed to separate audio. Please try again.');
+                    const msg = action.payload || 'Clinical analysis failed';
+                    debugError('[RecordingSection] Clinical analysis error:', msg);
+                    Alert.alert(
+                        'Processing Failed',
+                        msg || 'Failed to analyse recording. Please try again.'
+                    );
                     dispatch(setAiStethRecording(false));
                 }
 
@@ -259,7 +263,7 @@ export const RecordingSection = memo(
                 Alert.alert('Error',
                     'Failed to stop recording: ' + (err.message || 'Unknown error'));
             }
-        // eslint-disable-next-line react-hooks/exhaustive-deps
+            // eslint-disable-next-line react-hooks/exhaustive-deps
         }, [isStopEnabled, stopCountdownSec, stopRecording, dispatch, onShowAnalysis, disconnect]);
 
         // ── CHANGED: spinner text only ────────────────────────────────────────
@@ -283,15 +287,15 @@ export const RecordingSection = memo(
                     { opacity: fadeAnim, transform: [{ scale: scaleAnim }] }
                 ]}>
                     <LottieView source={require('../../../assets/lottie/heart.json')}
-                                autoPlay loop style={styles.notConnectedLottie} />
+                        autoPlay loop style={styles.notConnectedLottie} />
                     <Text style={styles.notConnectedTitle}>Device Not Connected</Text>
                     <Text style={styles.notConnectedText}>
                         Please connect to your AiSteth device to begin recording heart sounds.
                     </Text>
                     <TouchableOpacity style={styles.gradientButton} onPress={onBackToDevices}>
                         <LinearGradient colors={['#4A90E2', '#5BA3F5', '#6BB6FF']}
-                                        style={styles.gradientButtonInner}
-                                        start={{ x: 0, y: 0 }} end={{ x: 1, y: 1 }}>
+                            style={styles.gradientButtonInner}
+                            start={{ x: 0, y: 0 }} end={{ x: 1, y: 1 }}>
                             <Text style={styles.gradientButtonText}>Connect Device</Text>
                         </LinearGradient>
                     </TouchableOpacity>
@@ -304,14 +308,17 @@ export const RecordingSection = memo(
                 {/* Timer */}
                 <Animated.View style={[styles.statusBar, {
                     opacity: fadeAnim,
-                    transform: [{ translateY: Animated.multiply(fadeAnim.interpolate({
-                        inputRange: [0, 1], outputRange: [20, 0] }), 1) }],
+                    transform: [{
+                        translateY: Animated.multiply(fadeAnim.interpolate({
+                            inputRange: [0, 1], outputRange: [20, 0]
+                        }), 1)
+                    }],
                 }]}>
                     <LinearGradient
                         colors={isRecording ? ['#FF8A65', '#FFB69F'] : ['#E8EAF6', '#C5CAE9']}
                         style={styles.timerBadge} start={{ x: 0, y: 0 }} end={{ x: 1, y: 1 }}>
                         <LottieView source={require('../../../assets/lottie/heart.json')}
-                                    autoPlay loop style={styles.timerIcon} />
+                            autoPlay loop style={styles.timerIcon} />
                         <Text style={[styles.timerText, isRecording && styles.timerTextRecording]}>
                             {formatDuration(recordingDuration)}
                         </Text>
@@ -321,7 +328,7 @@ export const RecordingSection = memo(
                 {/* Steth auscultation points guide */}
                 {isRecording && (() => {
                     let activePoint = null;
-                    if (recordingDuration < 10)      activePoint = 'A';
+                    if (recordingDuration < 10) activePoint = 'A';
                     else if (recordingDuration < 20) activePoint = 'P';
                     else if (recordingDuration < 30) activePoint = 'T';
                     else if (recordingDuration < 40) activePoint = 'M';
@@ -343,7 +350,7 @@ export const RecordingSection = memo(
                             </Text>
                             <View style={styles.stethImageWrapper}>
                                 <Image source={require('../../../assets/aiStethChest.png')}
-                                       style={styles.stethImage} resizeMode="contain" />
+                                    style={styles.stethImage} resizeMode="contain" />
                                 {points.map(pt => {
                                     const isActive = pt.key === activePoint;
                                     return (
@@ -352,7 +359,7 @@ export const RecordingSection = memo(
                                                 left: `${pt.leftPct}%`, top: `${pt.topPct}%`,
                                                 backgroundColor: isActive ? '#2a5298' : 'rgba(109,151,197,0.75)',
                                                 borderWidth: isActive ? 2.5 : 0,
-                                                borderColor:  isActive ? '#fff' : 'transparent',
+                                                borderColor: isActive ? '#fff' : 'transparent',
                                                 shadowOpacity: isActive ? 0.45 : 0.15,
                                                 elevation: isActive ? 8 : 2,
                                             }}
@@ -367,14 +374,14 @@ export const RecordingSection = memo(
                 {/* Medical ECG Display */}
                 <Animated.View style={{ opacity: fadeAnim, transform: [{ scale: scaleAnim }] }}>
                     <MedicalECGWaveform amplitude={amplitude} amplitudeHistory={amplitudeHistory}
-                                        isRecording={isRecording} isPaused={isPaused} />
+                        isRecording={isRecording} isPaused={isPaused} />
                 </Animated.View>
 
                 {/* Error Display */}
                 {(error || completeUploadError) ? (
                     <Animated.View style={[styles.errorCard, { opacity: fadeAnim }]}>
                         <LottieView source={require('../../../assets/lottie/heart.json')}
-                                    autoPlay loop style={styles.errorIcon} />
+                            autoPlay loop style={styles.errorIcon} />
                         <Text style={styles.errorText}>{error || completeUploadError}</Text>
                     </Animated.View>
                 ) : null}
@@ -386,10 +393,10 @@ export const RecordingSection = memo(
                             disabled={!isConnected || isRecordingLoading}
                             activeOpacity={0.8} style={styles.circularButtonWrapper}>
                             <Animated.View style={[styles.circularButtonOuter,
-                                { transform: [{ scale: scaleAnim }] }]}>
+                            { transform: [{ scale: scaleAnim }] }]}>
                                 <LinearGradient colors={['#B8C5D6', '#D4DBE6', '#E8EDF5']}
-                                                style={styles.circularButtonBorder}
-                                                start={{ x: 0, y: 0 }} end={{ x: 1, y: 1 }}>
+                                    style={styles.circularButtonBorder}
+                                    start={{ x: 0, y: 0 }} end={{ x: 1, y: 1 }}>
                                     <LinearGradient
                                         colors={!isConnected || isRecordingLoading
                                             ? ['#D1D5DB', '#E5E7EB']
@@ -404,7 +411,7 @@ export const RecordingSection = memo(
                                         ) : (
                                             <View style={styles.circularButtonContent}>
                                                 <LottieView source={require('../../../assets/lottie/heart.json')}
-                                                            autoPlay loop style={styles.circularButtonLottie} />
+                                                    autoPlay loop style={styles.circularButtonLottie} />
                                                 <Text style={styles.circularButtonText}>
                                                     {isConnected ? t('start') : t('not')}
                                                 </Text>
@@ -423,10 +430,10 @@ export const RecordingSection = memo(
                             disabled={!isStopEnabled || isRecordingLoading}
                             activeOpacity={0.8} style={styles.circularButtonWrapper}>
                             <Animated.View style={[styles.circularButtonOuter,
-                                { transform: [{ scale: buttonPulse }] }]}>
+                            { transform: [{ scale: buttonPulse }] }]}>
                                 <LinearGradient colors={['#FFB8C8', '#FFD4E0', '#FFE8EF']}
-                                                style={styles.circularButtonBorder}
-                                                start={{ x: 0, y: 0 }} end={{ x: 1, y: 1 }}>
+                                    style={styles.circularButtonBorder}
+                                    start={{ x: 0, y: 0 }} end={{ x: 1, y: 1 }}>
                                     <LinearGradient
                                         colors={!isStopEnabled || isRecordingLoading
                                             ? ['#E5E7EB', '#F3F4F6']
@@ -462,7 +469,7 @@ export const RecordingSection = memo(
                     <Animated.View style={[styles.tipsCard, { opacity: fadeAnim }]}>
                         <LinearGradient colors={['#E3F2FD', '#F0F7FF']} style={styles.tipsContent}>
                             <LottieView source={require('../../../assets/lottie/heart.json')}
-                                        autoPlay loop style={styles.tipsIcon} />
+                                autoPlay loop style={styles.tipsIcon} />
                             <View style={styles.tipsTextContainer}>
                                 <Text style={styles.tipsTitle}>{t('recording_in_progress')}</Text>
                                 <Text style={styles.tipsText}>{t('keep_device_steady')}</Text>
@@ -477,47 +484,47 @@ export const RecordingSection = memo(
 
 // ── Styles — IDENTICAL to original ───────────────────────────────────────────
 const styles = StyleSheet.create({
-    container:              { flex: 1, backgroundColor: appliteColor },
-    contentContainer:       { padding: SPACING.xs, paddingBottom: SPACING.xl },
-    loadingOverlay:         { flex: 1, justifyContent: 'center', alignItems: 'center', backgroundColor: appliteColor, padding: SPACING.xl },
-    loadingLottie:          { width: 200, height: 200 },
-    loadingText:            { marginTop: SPACING.lg, fontSize: FONTS.sizes.xl, fontWeight: '700', color: '#2C5F8D' },
-    loadingSubtext:         { marginTop: SPACING.sm, fontSize: FONTS.sizes.md, color: '#64748B', textAlign: 'center' },
-    notConnectedContainer:  { flex: 1, justifyContent: 'center', alignItems: 'center', padding: SPACING.xl, backgroundColor: '#F8FAFC' },
-    notConnectedLottie:     { width: 250, height: 250, marginBottom: SPACING.xl },
-    notConnectedTitle:      { fontSize: FONTS.sizes.xl, fontWeight: '800', color: '#1E3A5F', marginBottom: SPACING.md },
-    notConnectedText:       { fontSize: FONTS.sizes.md, color: '#475569', textAlign: 'center', marginBottom: SPACING.xl, lineHeight: 24, paddingHorizontal: SPACING.lg },
-    gradientButton:         { borderRadius: BORDER_RADIUS.xl, overflow: 'hidden', ...SHADOWS.large },
-    gradientButtonInner:    { paddingHorizontal: SPACING.xl * 1.5, paddingVertical: SPACING.lg, alignItems: 'center' },
-    gradientButtonText:     { fontSize: FONTS.sizes.lg, fontWeight: '700', color: '#FFFFFF', letterSpacing: 0.5 },
-    statusBar:              { alignItems: 'flex-end', marginBottom: SPACING.sm },
-    timerBadge:             { flexDirection: 'row', alignItems: 'center', gap: SPACING.sm, paddingHorizontal: SPACING.lg, paddingVertical: SPACING.md, borderRadius: BORDER_RADIUS.xl, ...SHADOWS.large },
-    timerIcon:              { width: 24, height: 24 },
-    timerText:              { fontSize: FONTS.sizes.xxl, fontWeight: 'bold', color: '#3F51B5', fontFamily: 'monospace' },
-    timerTextRecording:     { color: '#C2185B' },
-    errorCard:              { flexDirection: 'row', alignItems: 'center', backgroundColor: '#FFEBEE', borderRadius: BORDER_RADIUS.lg, padding: SPACING.lg, marginBottom: SPACING.lg, borderWidth: 1, borderColor: '#FFCDD2', gap: SPACING.md },
-    errorIcon:              { width: 32, height: 32 },
-    errorText:              { flex: 1, fontSize: FONTS.sizes.md, color: '#D32F2F', fontWeight: '600' },
-    controls:               { marginTop: SPACING.xl, alignItems: 'center', justifyContent: 'center' },
-    circularButtonWrapper:  { alignItems: 'center', justifyContent: 'center' },
-    circularButtonOuter:    { width: 150, height: 150, alignItems: 'center', justifyContent: 'center' },
-    circularButtonBorder:   { width: 200, height: 200, borderRadius: 100, alignItems: 'center', justifyContent: 'center', ...SHADOWS.large, elevation: 12 },
-    circularButtonInner:    { width: 180, height: 180, borderRadius: 90, alignItems: 'center', justifyContent: 'center', shadowColor: '#000', shadowOffset: { width: 0, height: 8 }, shadowOpacity: 0.3, shadowRadius: 12, elevation: 15 },
-    circularButtonContent:  { alignItems: 'center', justifyContent: 'center', gap: SPACING.xs },
-    circularButtonLottie:   { width: 80, height: 80, marginBottom: SPACING.xs },
-    circularButtonText:     { fontSize: FONTS.sizes.md, fontWeight: '900', color: '#423f3f', letterSpacing: 2, textAlign: 'center' },
-    circularButtonUnderline:{ width: 80, height: 4, backgroundColor: 'rgba(255,255,255,0.6)', borderRadius: 2, marginTop: SPACING.xs },
-    stopIconSquare:         { width: 50, height: 50, backgroundColor: '#FFFFFF', borderRadius: 8, marginBottom: SPACING.sm },
-    tipsCard:               { marginTop: SPACING.xl, borderRadius: BORDER_RADIUS.lg, overflow: 'hidden' },
-    tipsContent:            { flexDirection: 'row', padding: SPACING.lg, gap: SPACING.md, borderWidth: 1, borderColor: '#BBDEFB', borderRadius: BORDER_RADIUS.lg },
-    tipsIcon:               { width: 40, height: 40 },
-    tipsTextContainer:      { flex: 1, gap: SPACING.xs },
-    tipsTitle:              { fontSize: FONTS.sizes.md, fontWeight: '700', color: '#1976D2' },
-    tipsText:               { fontSize: FONTS.sizes.sm, color: '#546E7A', lineHeight: 20 },
-    stethImageCard:         { flex: 1 },
-    stethImageWrapper:      { width: '55%', height: '99%', aspectRatio: 1327 / 901, position: 'relative', alignSelf: 'center' },
-    stethImage:             { width: '100%', height: '100%' },
-    stethPoint:             { position: 'absolute', width: 40, height: 40, borderRadius: 20, alignItems: 'center', justifyContent: 'center', marginLeft: -22, marginTop: -22, shadowColor: '#000', shadowOffset: { width: 0, height: 3 }, shadowRadius: 5 },
-    stethPointLabel:        { color: '#FFFFFF', fontSize: FONTS.sizes.lg, fontWeight: '800' },
-    stethPointHint:         { marginTop: SPACING.sm, fontSize: FONTS.sizes.sm, color: '#2a5298', fontWeight: '600', textAlign: 'left' },
+    container: { flex: 1, backgroundColor: appliteColor },
+    contentContainer: { padding: SPACING.xs, paddingBottom: SPACING.xl },
+    loadingOverlay: { flex: 1, justifyContent: 'center', alignItems: 'center', backgroundColor: appliteColor, padding: SPACING.xl },
+    loadingLottie: { width: 200, height: 200 },
+    loadingText: { marginTop: SPACING.lg, fontSize: FONTS.sizes.xl, fontWeight: '700', color: '#2C5F8D' },
+    loadingSubtext: { marginTop: SPACING.sm, fontSize: FONTS.sizes.md, color: '#64748B', textAlign: 'center' },
+    notConnectedContainer: { flex: 1, justifyContent: 'center', alignItems: 'center', padding: SPACING.xl, backgroundColor: '#F8FAFC' },
+    notConnectedLottie: { width: 250, height: 250, marginBottom: SPACING.xl },
+    notConnectedTitle: { fontSize: FONTS.sizes.xl, fontWeight: '800', color: '#1E3A5F', marginBottom: SPACING.md },
+    notConnectedText: { fontSize: FONTS.sizes.md, color: '#475569', textAlign: 'center', marginBottom: SPACING.xl, lineHeight: 24, paddingHorizontal: SPACING.lg },
+    gradientButton: { borderRadius: BORDER_RADIUS.xl, overflow: 'hidden', ...SHADOWS.large },
+    gradientButtonInner: { paddingHorizontal: SPACING.xl * 1.5, paddingVertical: SPACING.lg, alignItems: 'center' },
+    gradientButtonText: { fontSize: FONTS.sizes.lg, fontWeight: '700', color: '#FFFFFF', letterSpacing: 0.5 },
+    statusBar: { alignItems: 'flex-end', marginBottom: SPACING.sm },
+    timerBadge: { flexDirection: 'row', alignItems: 'center', gap: SPACING.sm, paddingHorizontal: SPACING.lg, paddingVertical: SPACING.md, borderRadius: BORDER_RADIUS.xl, ...SHADOWS.large },
+    timerIcon: { width: 24, height: 24 },
+    timerText: { fontSize: FONTS.sizes.xxl, fontWeight: 'bold', color: '#3F51B5', fontFamily: 'monospace' },
+    timerTextRecording: { color: '#C2185B' },
+    errorCard: { flexDirection: 'row', alignItems: 'center', backgroundColor: '#FFEBEE', borderRadius: BORDER_RADIUS.lg, padding: SPACING.lg, marginBottom: SPACING.lg, borderWidth: 1, borderColor: '#FFCDD2', gap: SPACING.md },
+    errorIcon: { width: 32, height: 32 },
+    errorText: { flex: 1, fontSize: FONTS.sizes.md, color: '#D32F2F', fontWeight: '600' },
+    controls: { marginTop: SPACING.xl, alignItems: 'center', justifyContent: 'center' },
+    circularButtonWrapper: { alignItems: 'center', justifyContent: 'center' },
+    circularButtonOuter: { width: 150, height: 150, alignItems: 'center', justifyContent: 'center' },
+    circularButtonBorder: { width: 200, height: 200, borderRadius: 100, alignItems: 'center', justifyContent: 'center', ...SHADOWS.large, elevation: 12 },
+    circularButtonInner: { width: 180, height: 180, borderRadius: 90, alignItems: 'center', justifyContent: 'center', shadowColor: '#000', shadowOffset: { width: 0, height: 8 }, shadowOpacity: 0.3, shadowRadius: 12, elevation: 15 },
+    circularButtonContent: { alignItems: 'center', justifyContent: 'center', gap: SPACING.xs },
+    circularButtonLottie: { width: 80, height: 80, marginBottom: SPACING.xs },
+    circularButtonText: { fontSize: FONTS.sizes.md, fontWeight: '900', color: '#423f3f', letterSpacing: 2, textAlign: 'center' },
+    circularButtonUnderline: { width: 80, height: 4, backgroundColor: 'rgba(255,255,255,0.6)', borderRadius: 2, marginTop: SPACING.xs },
+    stopIconSquare: { width: 50, height: 50, backgroundColor: '#FFFFFF', borderRadius: 8, marginBottom: SPACING.sm },
+    tipsCard: { marginTop: SPACING.xl, borderRadius: BORDER_RADIUS.lg, overflow: 'hidden' },
+    tipsContent: { flexDirection: 'row', padding: SPACING.lg, gap: SPACING.md, borderWidth: 1, borderColor: '#BBDEFB', borderRadius: BORDER_RADIUS.lg },
+    tipsIcon: { width: 40, height: 40 },
+    tipsTextContainer: { flex: 1, gap: SPACING.xs },
+    tipsTitle: { fontSize: FONTS.sizes.md, fontWeight: '700', color: '#1976D2' },
+    tipsText: { fontSize: FONTS.sizes.sm, color: '#546E7A', lineHeight: 20 },
+    stethImageCard: { flex: 1 },
+    stethImageWrapper: { width: '55%', height: '99%', aspectRatio: 1327 / 901, position: 'relative', alignSelf: 'center' },
+    stethImage: { width: '100%', height: '100%' },
+    stethPoint: { position: 'absolute', width: 40, height: 40, borderRadius: 20, alignItems: 'center', justifyContent: 'center', marginLeft: -22, marginTop: -22, shadowColor: '#000', shadowOffset: { width: 0, height: 3 }, shadowRadius: 5 },
+    stethPointLabel: { color: '#FFFFFF', fontSize: FONTS.sizes.lg, fontWeight: '800' },
+    stethPointHint: { marginTop: SPACING.sm, fontSize: FONTS.sizes.sm, color: '#2a5298', fontWeight: '600', textAlign: 'left' },
 });
